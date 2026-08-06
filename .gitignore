@@ -1,0 +1,33 @@
+# dependencies
+frontend/node_modules/
+backend/.venv/
+
+# next.js build
+frontend/.next/
+frontend/out/
+
+# tools directory
+.tools/
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+backend/.pytest_cache/
+
+# env files
+.env
+.env.local
+.env*.local
+
+# vercel
+.vercel
+
+# mac
+.DS_Store
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
