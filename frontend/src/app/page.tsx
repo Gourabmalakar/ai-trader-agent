@@ -1,4 +1,5 @@
 import { getDashboardData } from '@/lib/api';
+import { formatInr } from '@/lib/format';
 import { PortfolioHero } from '@/components/PortfolioHero';
 import { PerformanceChart } from '@/components/PerformanceChart';
 import { HoldingsTable } from '@/components/HoldingsTable';
@@ -10,11 +11,13 @@ import { AgentChatModal } from '@/components/AgentChatModal';
 
 export default async function Home() {
   const data = await getDashboardData();
+  const isLive = data.scheduler.status === 'MARKET_OPEN';
+  const statusLabel = isLive ? 'Market Open' : data.scheduler.status === 'AFTER_HOURS' ? 'After Hours' : 'Offline';
 
   return (
     <main className="min-h-screen px-4 py-5 lg:px-8">
       {/* Top Ticker & System Header */}
-      <header className="mb-6 flex flex-col gap-4 border-b border-grid pb-5 lg:flex-row lg:items-center lg:justify-between">
+      <header className="mb-6 grid gap-4 border-b border-grid pb-5 lg:grid-cols-[1.5fr_auto] lg:items-end">
         <div>
           <div className="flex items-center gap-3">
             <span className="flex h-2.5 w-2.5 rounded-full bg-profit animate-pulse"></span>
@@ -22,20 +25,30 @@ export default async function Home() {
               AI Agentic Hedge Fund System · NSE India
             </p>
           </div>
-          <h1 className="mt-1.5 text-3xl font-black tracking-tight text-slate-50 lg:text-5xl">
-            Bloomberg Command Center
-          </h1>
-        </div>
-        
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="rounded-full border border-grid bg-panel/90 px-4 py-1.5 text-xs text-slate-300">
-            Strategy: <span className="font-semibold text-profit">Delivery Swing Outperformance</span>
+          <div className="mt-1.5">
+            <h1 className="text-3xl font-black tracking-tight text-slate-50 sm:text-4xl lg:text-5xl">
+              Trade Intelligence Command Center
+            </h1>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400">
+              Live strategy monitoring for Indian equities with a strict NSE trading window, risk-aware position sizing, and transparent scheduler status.
+            </p>
           </div>
-          <div className="rounded-full border border-profit/40 bg-profit/10 px-4 py-1.5 text-xs font-semibold text-profit">
-            Paper Capital: ₹1,00,00,000 (1 Crore)
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+          <div className={`rounded-full border px-4 py-1.5 text-xs font-semibold ${isLive ? 'border-profit/40 bg-profit/10 text-profit' : 'border-amber/40 bg-amber/10 text-amber'}`}>
+            {statusLabel}
+          </div>
+          <div className="rounded-full border border-grid bg-panel/90 px-4 py-1.5 text-xs text-slate-300">
+            Portfolio Value: <span className="font-semibold text-slate-100">{formatInr(data.portfolio.totalValue)}</span>
           </div>
         </div>
       </header>
+      {data.isFallback && (
+        <div className="mb-6 rounded-2xl border border-amber/30 bg-amber/10 px-5 py-4 text-sm text-slate-100">
+          <strong className="font-semibold">Live data unavailable.</strong> The frontend is displaying fallback content because the dashboard API could not be reached. Start the backend or set <code className="rounded bg-slate-900 px-1 py-0.5 text-xs">NEXT_PUBLIC_API_URL</code> to connect to real strategy metrics.
+        </div>
+      )}
 
       {/* Portfolio Key Performance Metrics */}
       <PortfolioHero portfolio={data.portfolio} />

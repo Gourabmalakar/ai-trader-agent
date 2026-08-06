@@ -51,4 +51,5 @@ export type DashboardData = {
     drivers: string[];
     bias: string;
   };
+  isFallback?: boolean;
 };

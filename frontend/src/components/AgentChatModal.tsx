@@ -8,7 +8,7 @@ export function AgentChatModal() {
   const [messages, setMessages] = useState<Array<{ sender: 'user' | 'agent'; text: string; time: string }>>([
     {
       sender: 'agent',
-      text: 'Greetings! I am the Chief Investment Officer for AI Trader Agent. Ask me anything about our ₹1 Crore portfolio strategy, Nifty 50 risk posture, or specific stock trade memos.',
+      text: 'Greetings! I am the Chief Investment Officer for AI Trader Agent. Ask me anything about our live portfolio strategy, Nifty 50 risk posture, or current trade rationale.',
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
   ]);
