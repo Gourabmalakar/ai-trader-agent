@@ -4,7 +4,7 @@ export async function getDashboardData(): Promise<DashboardData> {
   const baseUrl = process.env.NEXT_PUBLIC_API_URL;
   const dashboardUrl = baseUrl ? `${baseUrl}/api/dashboard` : '/api/dashboard';
   try {
-    const response = await fetch(dashboardUrl, { next: { revalidate: 30 } });
+    const response = await fetch(dashboardUrl, { next: { revalidate: 60 } });
     if (response.ok) {
       return await response.json();
     }
@@ -57,6 +57,12 @@ export async function getDashboardData(): Promise<DashboardData> {
       summary: 'No market outlook available while the live backend is disconnected.',
       drivers: [],
       bias: 'Offline'
+    },
+    dataStatus: {
+      source: 'No connected backend',
+      updatedAt: null,
+      message: 'The paper-trading backend is offline.',
+      persistence: 'No paper account data is being displayed.'
     },
     isFallback: true
   };

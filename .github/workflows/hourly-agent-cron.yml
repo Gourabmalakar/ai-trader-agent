@@ -1,0 +1,20 @@
+name: Hourly agent cron
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  run-cron:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger backend cron
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl -fsS -X POST "$BACKEND_URL/api/cron/run" \
+            -H "X-Cron-Secret: $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            -d '{}'

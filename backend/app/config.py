@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Optional
+import os
 
 
 @dataclass(frozen=True)
@@ -16,7 +17,10 @@ class Settings:
     min_cash_buffer: float = 0.15
     max_daily_deployment: float = 0.25
     stale_data_minutes: int = 90
-    gemini_api_key: Optional[str] = None
+    gemini_api_key: Optional[str] = os.getenv("GEMINI_API_KEY")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+    llm_daily_cap: int = int(os.getenv("LLM_DAILY_CAP", "30"))
+    cron_secret: Optional[str] = os.getenv("CRON_SECRET")
 
 
 

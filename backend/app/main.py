@@ -2,13 +2,23 @@ from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
+from fastapi import Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.agents.loop import PortfolioAgentLoop
 from app.backtesting.engine import BacktestEngine
 from app.config import settings
+from app.llm import ask_llm
 from app.scheduler.calendar import is_market_day, is_market_open, next_market_open
 
 app = FastAPI(title="AI Trader Agent", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "https://frontend-five-jade-25.vercel.app"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 IST = ZoneInfo(settings.timezone)
 loop = PortfolioAgentLoop()
@@ -63,24 +73,22 @@ def dashboard() -> dict:
 def chat(body: ChatRequest) -> dict:
     now = datetime.now(IST)
     dash = loop.build_dashboard_payload(now)
-    msg = body.message.lower()
-    
-    if "reliance" in msg:
-        reply = "Reliance Industries (RELIANCE.NS) is currently our largest conviction holding (7.8% weight). Technical momentum score is +0.42 with RSI at 63. Analyst & Portfolio Manager agree on trend continuation above 20-day SMA."
-    elif "risk" in msg or "drawdown" in msg:
-        reply = f"Current Portfolio Risk Score is {dash['riskProfile']['score']}/100 ({dash['riskProfile']['posture']}). We preserve a strict cash buffer of {(dash['riskProfile']['cashBuffer']*100):.0f}% to protect against macro volatility and limit max single stock position size to {dash['riskProfile']['maxSingleStockWeight']}%."
-    elif "nifty" in msg or "benchmark" in msg or "beat" in msg:
-        reply = f"The portfolio currently holds a total return of +{dash['portfolio']['totalReturn']}% vs Nifty 50 benchmark return of +{dash['portfolio']['benchmarkReturn']}%, generating an Alpha of +{dash['portfolio']['alpha']}%. Position sizing favors momentum leaders while trimming underperforming tech stocks."
-    elif "it" in msg or "infosys" in msg or "tcs" in msg:
-        reply = "Infosys (INFY.NS) lost momentum (-0.31 score) so we trimmed 18 shares to manage tech sector concentration. TCS remains on our active watchlist with positive relative strength."
-    else:
-        reply = f"As the Head Portfolio Manager of AI Trader Agent, our investment thesis focuses on: {', '.join(dash['investmentThesis']['focus'])}. Market posture is '{dash['marketOutlook']['bias']}' with ₹1 Crore capital paper-traded in regular market hours (09:15-15:30 IST)."
+    reply = ask_llm(body.message, dash, loop.store)
         
     return {
         "reply": reply,
         "agent": "Chief Investment Officer",
         "timestamp": now.isoformat(),
     }
+
+
+@app.post("/api/cron/run")
+def cron_run(x_cron_secret: str | None = Header(default=None)) -> dict:
+    if not settings.cron_secret or x_cron_secret != settings.cron_secret:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    now = datetime.now(IST)
+    payload = loop.build_dashboard_payload(now)
+    return {"ok": True, "timestamp": now.isoformat(), "portfolio": payload["portfolio"], "scheduler": payload["scheduler"]}
 
 
 @app.get("/api/backtest/sample")

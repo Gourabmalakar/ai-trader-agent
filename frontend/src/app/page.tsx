@@ -8,6 +8,7 @@ import { SchedulerPanel } from '@/components/SchedulerPanel';
 import { TradeBlotter } from '@/components/TradeBlotter';
 import { MarketIntelligence } from '@/components/MarketIntelligence';
 import { AgentChatModal } from '@/components/AgentChatModal';
+import { DashboardRefresh } from '@/components/DashboardRefresh';
 
 export default async function Home() {
   const data = await getDashboardData();
@@ -16,6 +17,7 @@ export default async function Home() {
 
   return (
     <main className="min-h-screen px-4 py-5 lg:px-8">
+      <DashboardRefresh />
       {/* Top Ticker & System Header */}
       <header className="mb-6 grid gap-4 border-b border-grid pb-5 lg:grid-cols-[1.5fr_auto] lg:items-end">
         <div>
@@ -30,7 +32,7 @@ export default async function Home() {
               Trade Intelligence Command Center
             </h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400">
-              Live strategy monitoring for Indian equities with a strict NSE trading window, risk-aware position sizing, and transparent scheduler status.
+              Paper-trading intelligence for Indian equities. Every displayed trade, decision, and return is sourced from the connected backend.
             </p>
           </div>
         </div>
@@ -49,6 +51,11 @@ export default async function Home() {
           <strong className="font-semibold">Live data unavailable.</strong> The frontend is displaying fallback content because the dashboard API could not be reached. Start the backend or set <code className="rounded bg-slate-900 px-1 py-0.5 text-xs">NEXT_PUBLIC_API_URL</code> to connect to real strategy metrics.
         </div>
       )}
+
+      <div className={`mb-6 flex flex-col gap-2 rounded-2xl border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between ${data.isFallback ? 'border-amber/30 bg-amber/10 text-amber' : 'border-profit/20 bg-profit/5 text-slate-300'}`}>
+        <span><strong className="text-slate-100">Data:</strong> {data.dataStatus?.message}</span>
+        <span className="text-xs text-slate-400">{data.dataStatus?.source} · refreshes every minute</span>
+      </div>
 
       {/* Portfolio Key Performance Metrics */}
       <PortfolioHero portfolio={data.portfolio} />
