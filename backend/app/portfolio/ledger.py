@@ -14,6 +14,7 @@ class PortfolioLedger:
     positions: dict[str, Position] = field(default_factory=dict)
     trades: list[Trade] = field(default_factory=list)
     snapshots: list[dict] = field(default_factory=list)
+    realized_pnl_total: float = 0.0
 
     def position_value(self, symbol: str, latest_prices: dict[str, float]) -> float:
         position = self.positions.get(symbol)
@@ -46,6 +47,11 @@ class PortfolioLedger:
         else:
             current = self.positions.get(trade.symbol)
             if current:
+                # Realized P&L against the cost basis being sold down, so every SELL trade can be
+                # shown transparently as "bought at X, sold at Y, net P&L = Z" — not just a cash flow.
+                trade.cost_basis = current.average_price
+                trade.realized_pnl = round((trade.price - current.average_price) * trade.quantity - trade.fees, 2)
+                self.realized_pnl_total = round(self.realized_pnl_total + trade.realized_pnl, 2)
                 remaining = current.quantity - trade.quantity
                 if remaining > 0:
                     self.positions[trade.symbol] = Position(trade.symbol, remaining, current.average_price, current.sector)

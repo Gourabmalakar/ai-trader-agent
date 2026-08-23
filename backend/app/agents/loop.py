@@ -12,6 +12,7 @@ from app.agents.news_intelligence import NewsImpact, NewsIntelligenceAgent, News
 from app.config import settings
 from app.data.universe import NIFTY_50
 from app.execution.paper import PaperExecutionEngine
+from app.governance.compliance import GovernanceOfficer
 from app.llm import decision_engine
 from app.models import AgentDecision, MarketTick, Order, OrderSide, OrderStatus, Position, Trade
 from app.portfolio.ledger import PortfolioLedger
@@ -29,6 +30,7 @@ class PortfolioAgentLoop:
     def __init__(self, store: Optional[StateStore] = None) -> None:
         self.analyst = AnalystAgent()
         self.market_regime = MarketRegimeAgent()
+        self.governance = GovernanceOfficer()
         self.news = NewsIntelligenceAgent()
         self.ist = ZoneInfo(settings.timezone)
         self.store = store or StateStore.from_env()
@@ -119,6 +121,8 @@ class PortfolioAgentLoop:
             "decision_summary": trade.decision_summary,
             "rejection_reason": trade.rejection_reason,
             "provider": trade.provider,
+            "realized_pnl": trade.realized_pnl,
+            "cost_basis": trade.cost_basis,
         }
 
     def _trade_from_dict(self, payload: dict) -> Trade:
@@ -136,11 +140,14 @@ class PortfolioAgentLoop:
             decision_summary=payload.get("decision_summary"),
             rejection_reason=payload.get("rejection_reason"),
             provider=payload.get("provider", "quant_only"),
+            realized_pnl=payload.get("realized_pnl"),
+            cost_basis=payload.get("cost_basis"),
         )
 
     def _ledger_to_state(self) -> dict:
         return {
             "cash": self.ledger.cash,
+            "realized_pnl_total": self.ledger.realized_pnl_total,
             "positions": {
                 symbol: {
                     "symbol": position.symbol,
@@ -173,6 +180,7 @@ class PortfolioAgentLoop:
             self.state_key,
             {
                 "cash": self.ledger.cash,
+                "realized_pnl_total": 0.0,
                 "positions": {},
                 "trades": [],
                 "snapshots": [],
@@ -193,6 +201,7 @@ class PortfolioAgentLoop:
             },
         )
         self.ledger.cash = float(state.get("cash", self.ledger.cash))
+        self.ledger.realized_pnl_total = float(state.get("realized_pnl_total", 0.0))
         self.ledger.positions = {
             symbol: Position(
                 symbol=payload["symbol"],
@@ -385,7 +394,7 @@ class PortfolioAgentLoop:
                 shortlist.append(decision.symbol)
         return list(dict.fromkeys(shortlist))[: settings.shortlist_size]
 
-    def _engine_context(self, shortlist: list[str], quant_lookup: dict[str, AgentDecision]) -> dict[str, Any]:
+    def _engine_context(self, shortlist: list[str], quant_lookup: dict[str, AgentDecision], regime: dict[str, Any]) -> dict[str, Any]:
         fundamentals_by_symbol = {item["symbol"]: item for item in self.public_fundamentals}
         news_by_symbol: dict[str, list[dict]] = {}
         for item in self.public_news:
@@ -420,6 +429,8 @@ class PortfolioAgentLoop:
                 "minCashBufferPct": settings.min_cash_buffer,
                 "maxDailyDeploymentPct": settings.max_daily_deployment,
                 "cashAvailablePct": round(self.ledger.cash / max(self.ledger.total_value(self.latest_prices), 1), 4),
+                "marketRegime": regime.get("regime"),
+                "recommendedOverallExposurePct": regime.get("target_exposure"),
             },
         }
 
@@ -439,6 +450,17 @@ class PortfolioAgentLoop:
             return self.current_decisions
 
         quant_decisions = [self.analyst.review(symbol, self._features(symbol)) for symbol in self.symbols]
+
+        # Smart capital deployment: scale how much weight each BUY signal actually gets by the
+        # current market regime's recommended exposure (e.g. ~35% in a risk-off benchmark trend
+        # vs ~90% in a risk-on trend), so the agent genuinely holds back capital in weak markets
+        # instead of always trying to deploy near its per-position cap regardless of conditions.
+        regime = self.market_regime.classify(self.benchmark_history or [1.0, 1.0])
+        exposure_factor = regime.get("target_exposure", 0.65)
+        for decision in quant_decisions:
+            if decision.action == OrderSide.BUY:
+                decision.target_weight = round(decision.target_weight * exposure_factor, 4)
+
         quant_lookup = {decision.symbol: decision for decision in quant_decisions}
 
         shortlist = self._build_shortlist(quant_decisions)
@@ -447,7 +469,7 @@ class PortfolioAgentLoop:
 
         signature = self._shortlist_signature(shortlist, quant_lookup)
         if shortlist and signature != self.last_shortlist_signature:
-            context = self._engine_context(shortlist, quant_lookup)
+            context = self._engine_context(shortlist, quant_lookup, regime)
             context["asOf"] = now.isoformat()
             shortlist_quant_decisions = [quant_lookup[symbol] for symbol in shortlist]
             result = decision_engine.get_trading_decisions(context, shortlist_quant_decisions, self.store)
@@ -514,7 +536,12 @@ class PortfolioAgentLoop:
                     )
                     self.store.append_event("trade", self._trade_to_dict(trade))
 
-        if self.latest_prices and is_market_open(now):
+        # Snapshot on every completed cycle, not just during market hours: a cycle that runs while
+        # the market is closed (e.g. a manual trigger, or the very first cycle before day 1's
+        # session opens) still records a legitimate "as of now" baseline point. Without this, the
+        # performance chart and the agent-vs-NIFTY comparison have nothing to plot until the first
+        # live trading session, and the pre-trading comparison has no inception point to pin to.
+        if self.latest_prices:
             self.ledger.snapshot(now, self.latest_prices, self.benchmark_history[-1] if self.benchmark_history else None)
             self.last_snapshot_date = now.date().isoformat()
         self.current_decisions = decisions
@@ -528,11 +555,20 @@ class PortfolioAgentLoop:
     # ------------------------------------------------------------------
     def _research_context(self) -> dict[str, Any]:
         total_value = self.ledger.total_value(self.latest_prices)
+        regime = self.market_regime.classify(self.benchmark_history or [1.0, 1.0])
+        cash_pct = (self.ledger.cash / total_value * 100) if total_value else 100.0
         return {
             "comparison": self._comparison_payload(total_value),
             "holdingsBySector": self._sector_exposure(total_value),
             "recentDecisions": self.decision_log[-15:],
             "marketIntelligence": self.news.summarize_market_intelligence(self.public_news),
+            "capitalAllocation": {
+                "marketRegime": regime["regime"],
+                "recommendedExposurePct": round(regime.get("target_exposure", 0.65) * 100, 1),
+                "cashReservePct": round(cash_pct, 1),
+                "deployedPct": round(100 - cash_pct, 1),
+                "realizedPnl": round(self.ledger.realized_pnl_total, 2),
+            },
         }
 
     def _sector_exposure(self, total_value: float) -> dict[str, float]:
@@ -588,8 +624,16 @@ class PortfolioAgentLoop:
         ]
 
     def _comparison_payload(self, total_value: float) -> dict:
-        benchmark_start = self.benchmark_history[0] if self.benchmark_history else None
         benchmark_now = self.benchmark_history[-1] if self.benchmark_history else None
+        # The NIFTY baseline must be pinned to the benchmark's value AT THE AGENT'S OWN INCEPTION
+        # (its first snapshot) — not to the oldest point in the rolling ~6-month price-history
+        # lookback, which drifts by itself every day and has nothing to do with when the agent
+        # actually started. Before any snapshot exists yet (e.g. before the first trading day),
+        # inception is effectively "now", so start == now and both sides correctly show 0% return.
+        if self.ledger.snapshots:
+            benchmark_start = self.ledger.snapshots[0].get("benchmark_value") or benchmark_now
+        else:
+            benchmark_start = benchmark_now
         starting_capital = settings.starting_capital_inr
         agent_return_pct = ((total_value / starting_capital) - 1) * 100 if starting_capital else 0
         nifty_value = starting_capital
@@ -649,6 +693,8 @@ class PortfolioAgentLoop:
                 "side": trade.side.value,
                 "quantity": trade.quantity,
                 "price": trade.price,
+                "costBasis": trade.cost_basis,
+                "realizedPnl": trade.realized_pnl,
                 "reason": trade.decision_summary or trade.rejection_reason or "Paper execution approved by the risk manager.",
                 "status": trade.status.value,
                 "provider": trade.provider,
@@ -665,6 +711,38 @@ class PortfolioAgentLoop:
             "categories": news_summary["categories"],
             "items": news_summary["items"],
         }
+
+        unrealized_pnl_total = sum(holding["pnl"] for holding in holdings)
+        cash_pct = (self.ledger.cash / total_value * 100) if total_value else 100.0
+        deployment_pct = 100.0 - cash_pct
+        recommended_exposure_pct = regime.get("target_exposure", 0.65) * 100
+        if deployment_pct < recommended_exposure_pct - 10:
+            allocation_stance = "under-deployed"
+        elif deployment_pct > recommended_exposure_pct + 10:
+            allocation_stance = "over-deployed"
+        else:
+            allocation_stance = "in line"
+        capital_allocation = {
+            "marketRegime": regime["regime"],
+            "recommendedExposurePct": round(recommended_exposure_pct, 1),
+            "actualDeployedPct": round(deployment_pct, 1),
+            "cashReservePct": round(cash_pct, 1),
+            "cashReserveValue": round(self.ledger.cash, 2),
+            "deployedValue": round(invested_value, 2),
+            "allocationStance": allocation_stance,
+            "realizedPnl": round(self.ledger.realized_pnl_total, 2),
+            "unrealizedPnl": round(unrealized_pnl_total, 2),
+            "totalPnl": round(self.ledger.realized_pnl_total + unrealized_pnl_total, 2),
+            "rationale": (
+                f"Benchmark regime is '{regime['regime'].replace('_', ' ')}', which targets roughly "
+                f"{recommended_exposure_pct:.0f}% of the book at risk; the agent is currently "
+                f"{deployment_pct:.0f}% deployed ({allocation_stance}) and holding {cash_pct:.0f}% in cash. "
+                f"Realized P&L to date is {'a gain of' if self.ledger.realized_pnl_total >= 0 else 'a loss of'} "
+                f"₹{abs(self.ledger.realized_pnl_total):,.0f} from {sell_count} closed trade(s); "
+                f"unrealized P&L on open positions is ₹{unrealized_pnl_total:,.0f}."
+            ),
+        }
+        governance_report = self.governance.audit(self.ledger, self.latest_prices, total_value)
 
         return {
             "portfolio": {
@@ -704,6 +782,8 @@ class PortfolioAgentLoop:
             "decisions": self.decision_log[-30:][::-1],
             "marketIntelligence": market_intelligence,
             "research": self.research,
+            "capitalAllocation": capital_allocation,
+            "governance": governance_report,
             "publicSignals": {
                 "fundamentals": self.public_fundamentals,
                 "headlines": [self._news_to_dict(item) for item in market_intelligence_items],

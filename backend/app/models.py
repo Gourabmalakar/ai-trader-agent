@@ -49,6 +49,8 @@ class Trade:
     decision_summary: Optional[str] = None
     rejection_reason: Optional[str] = None
     provider: str = "quant_only"
+    realized_pnl: Optional[float] = None
+    cost_basis: Optional[float] = None
 
 
 @dataclass

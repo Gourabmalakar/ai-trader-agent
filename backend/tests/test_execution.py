@@ -42,3 +42,30 @@ def test_risk_rejects_position_above_max_weight():
     trade = executor.execute(order, tick, {"RELIANCE.NS": 1000.0})
     assert trade.status == OrderStatus.REJECTED
     assert trade.rejection_reason == "Position would exceed max single-stock weight"
+
+
+def test_sell_trade_records_realized_pnl_and_cost_basis():
+    ledger = PortfolioLedger()
+    executor = PaperExecutionEngine(ledger)
+    now = datetime(2026, 8, 6, 10, 0, tzinfo=IST)
+
+    buy = executor.execute(
+        Order("RELIANCE.NS", OrderSide.BUY, 10, 1000.0, now, "buy-1"),
+        MarketTick("RELIANCE.NS", 1000.0, now, "Energy"),
+        {"RELIANCE.NS": 1000.0},
+    )
+    assert buy.status == OrderStatus.FILLED_PAPER
+    assert buy.realized_pnl is None  # a BUY never realizes P&L
+
+    sell = executor.execute(
+        Order("RELIANCE.NS", OrderSide.SELL, 10, 1100.0, now, "sell-1"),
+        MarketTick("RELIANCE.NS", 1100.0, now, "Energy"),
+        {"RELIANCE.NS": 1100.0},
+    )
+    assert sell.status == OrderStatus.FILLED_PAPER
+    assert sell.cost_basis == buy.price
+    # sold at a higher (slipped) price than bought, minus zero fees -> positive realized P&L
+    expected_pnl = round((sell.price - buy.price) * 10, 2)
+    assert sell.realized_pnl == expected_pnl
+    assert ledger.realized_pnl_total == expected_pnl
+    assert "RELIANCE.NS" not in ledger.positions  # fully closed
