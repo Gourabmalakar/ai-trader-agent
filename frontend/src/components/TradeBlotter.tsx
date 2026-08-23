@@ -40,7 +40,16 @@ export function TradeBlotter({ trades }: { trades: DashboardData['trades'] }) {
                 <span className={trade.side === 'BUY' ? 'font-semibold text-emerald-300' : 'font-semibold text-amber-300'}>{trade.side} {trade.symbol}</span>
                 <span className="text-slate-500">{new Date(trade.time).toLocaleString('en-IN')}</span>
               </div>
-              <p className="mt-2 text-slate-300">Qty {trade.quantity} @ ₹{trade.price.toFixed(2)}</p>
+              <p className="mt-2 text-slate-300">
+                {trade.side === 'SELL' && trade.costBasis != null
+                  ? `Bought at ₹${trade.costBasis.toFixed(2)}, sold ${trade.quantity} @ ₹${trade.price.toFixed(2)}`
+                  : `Qty ${trade.quantity} @ ₹${trade.price.toFixed(2)}`}
+              </p>
+              {trade.realizedPnl != null && (
+                <p className={`mt-1 text-sm font-semibold ${trade.realizedPnl >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                  Net P&L: {trade.realizedPnl >= 0 ? '+' : ''}₹{trade.realizedPnl.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                </p>
+              )}
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <span className="text-xs uppercase tracking-[0.22em] text-slate-500">{trade.status ?? 'FILLED_PAPER'}</span>
                 <ProviderBadge provider={trade.provider} />

@@ -41,7 +41,18 @@ export type DashboardData = {
     lastEngineNote?: string;
   };
   holdings: Array<{ symbol: string; name: string; sector?: string; weight: number; pnl: number; risk: string; conviction: number }>;
-  trades: Array<{ time: string; symbol: string; side: string; quantity: number; price: number; reason: string; status?: string; provider?: string }>;
+  trades: Array<{
+    time: string;
+    symbol: string;
+    side: string;
+    quantity: number;
+    price: number;
+    costBasis?: number | null;
+    realizedPnl?: number | null;
+    reason: string;
+    status?: string;
+    provider?: string;
+  }>;
   performance: Array<{ date: string; portfolioValue: number; benchmarkValue: number; portfolioReturn: number; benchmarkReturn: number }>;
   decisions: string[];
   marketIntelligence?: {
@@ -109,6 +120,26 @@ export type DashboardData = {
   research?: {
     daily: { text: string; provider: string; generatedAt: string } | null;
     monthly: { text: string; provider: string; generatedAt: string } | null;
+  };
+  capitalAllocation?: {
+    marketRegime: string;
+    recommendedExposurePct: number;
+    actualDeployedPct: number;
+    cashReservePct: number;
+    cashReserveValue: number;
+    deployedValue: number;
+    allocationStance: 'under-deployed' | 'over-deployed' | 'in line';
+    realizedPnl: number;
+    unrealizedPnl: number;
+    totalPnl: number;
+    rationale: string;
+  };
+  governance?: {
+    auditedTrades: number;
+    auditedSnapshots: number;
+    violations: Array<{ subject: string; timestamp: string; rule: string; detail: string }>;
+    status: 'CLEAN' | 'VIOLATIONS_FOUND';
+    rulesChecked: string[];
   };
   isFallback?: boolean;
 };
