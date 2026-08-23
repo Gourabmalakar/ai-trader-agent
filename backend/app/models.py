@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Optional, Union
 
 
 class OrderSide(str, Enum):
@@ -46,7 +46,9 @@ class Trade:
     status: OrderStatus
     timestamp: datetime
     reasoning_id: str
-    rejection_reason: str | None = None
+    decision_summary: Optional[str] = None
+    rejection_reason: Optional[str] = None
+    provider: str = "quant_only"
 
 
 @dataclass
@@ -60,9 +62,10 @@ class Position:
 @dataclass
 class AgentDecision:
     symbol: str
-    action: OrderSide | str
+    action: Union[OrderSide, str]
     confidence: float
     target_weight: float
     reasoning: list[str]
     risks: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    provider: str = "quant_only"

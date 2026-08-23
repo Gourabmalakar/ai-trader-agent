@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { DashboardData } from '@/types/dashboard';
 
 type Timeframe = '1D' | '1W' | '1M' | '3M' | '1Y' | 'ALL';
@@ -24,7 +24,7 @@ export function PerformanceChart({ data }: { data: DashboardData['performance'] 
 
   if (chartData.length === 0) {
     return (
-      <div className="min-h-[320px] rounded-2xl border border-grid bg-panel/80 p-5 shadow-glow">
+      <div className="min-h-[320px] rounded-[1.75rem] border border-white/8 bg-white/[0.04] p-5">
         <div className="text-sm text-slate-400">
           No performance history available. Connect to the backend API for live portfolio and benchmark data.
         </div>
@@ -33,11 +33,11 @@ export function PerformanceChart({ data }: { data: DashboardData['performance'] 
   }
 
   return (
-    <div className="min-h-[320px] rounded-2xl border border-grid bg-panel/80 p-5 shadow-glow">
+    <div className="min-h-[320px] rounded-[1.75rem] border border-white/8 bg-white/[0.04] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.22)]">
       <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-slate-100">Portfolio vs NIFTY 50 Benchmark</h2>
-          <p className="text-xs text-slate-400">Live performance relative to the benchmark, with alpha tracking and timeframe controls.</p>
+          <h2 className="text-lg font-semibold text-slate-100">Rs 1 CR race: agent vs NIFTY</h2>
+          <p className="text-xs text-slate-400">Absolute portfolio value over time, starting from the paper account inception value.</p>
         </div>
         <div className="flex gap-1.5 rounded-xl border border-grid bg-terminal/80 p-1">
           {(['1D', '1W', '1M', '3M', '1Y', 'ALL'] as Timeframe[]).map((tf) => (
@@ -57,33 +57,23 @@ export function PerformanceChart({ data }: { data: DashboardData['performance'] 
       </div>
 
       <ResponsiveContainer width="100%" height="78%">
-        <AreaChart data={chartData}>
-          <defs>
-            <linearGradient id="portfolioGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#00ff9c" stopOpacity={0.4} />
-              <stop offset="95%" stopColor="#00ff9c" stopOpacity={0.0} />
-            </linearGradient>
-            <linearGradient id="benchmarkGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#ffb000" stopOpacity={0.2} />
-              <stop offset="95%" stopColor="#ffb000" stopOpacity={0.0} />
-            </linearGradient>
-          </defs>
-          <CartesianGrid stroke="#182033" strokeDasharray="3 3" />
+        <LineChart data={chartData}>
+          <CartesianGrid stroke="rgba(148,163,184,0.12)" strokeDasharray="3 3" />
           <XAxis dataKey="date" stroke="#64748b" tickLine={false} style={{ fontSize: '11px' }} />
           <YAxis
             stroke="#64748b"
             tickLine={false}
             style={{ fontSize: '11px' }}
             domain={['auto', 'auto']}
-            tickFormatter={(val) => `₹${(val / 100000).toFixed(1)}L`}
+            tickFormatter={(val) => `₹${Number(val).toLocaleString('en-IN')}`}
           />
           <Tooltip
-            contentStyle={{ background: '#0b1020', border: '1px solid #182033', borderRadius: '12px', color: '#eef4ff' }}
-            formatter={(val: any) => [`₹${Number(val || 0).toLocaleString('en-IN')}`, 'Value']}
+            contentStyle={{ background: '#0b1020', border: '1px solid rgba(148,163,184,0.2)', borderRadius: '12px', color: '#eef4ff' }}
+            formatter={(val, name) => [`₹${Number(val || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`, String(name ?? '')]}
           />
-          <Area type="monotone" name="Portfolio" dataKey="portfolio" stroke="#00ff9c" strokeWidth={2} fill="url(#portfolioGrad)" />
-          <Area type="monotone" name="Nifty 50 Benchmark" dataKey="benchmark" stroke="#ffb000" strokeWidth={2} fill="url(#benchmarkGrad)" />
-        </AreaChart>
+          <Line type="monotone" name="AI Agent" dataKey="portfolioValue" stroke="#22c55e" strokeWidth={2.5} dot={false} />
+          <Line type="monotone" name="NIFTY" dataKey="benchmarkValue" stroke="#f59e0b" strokeWidth={2.5} dot={false} />
+        </LineChart>
       </ResponsiveContainer>
     </div>
   );

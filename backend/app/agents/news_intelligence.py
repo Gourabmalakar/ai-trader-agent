@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+from typing import Optional
 
 
 class NewsImpact(str, Enum):
@@ -41,7 +42,7 @@ class NewsIntelligenceAgent:
             return NewsImpact.POSITIVE
         return NewsImpact.NEUTRAL
 
-    def risk_adjustment(self, items: list[NewsItem], symbol: str | None = None) -> dict:
+    def risk_adjustment(self, items: list[NewsItem], symbol: Optional[str] = None) -> dict:
         relevant = [item for item in items if symbol is None or symbol in item.symbols or not item.symbols]
         high_risk_count = sum(1 for item in relevant if item.impact == NewsImpact.HIGH_RISK)
         positive_count = sum(1 for item in relevant if item.impact == NewsImpact.POSITIVE)

@@ -1,0 +1,34 @@
+name: Daily close report
+
+# Fires once at ~15:35 IST (10:05 UTC) on weekdays: generates the daily research note and
+# emails the trade summary. The backend no-ops the research note gracefully if it isn't a
+# trading day; the email still reports the (unchanged) portfolio state.
+on:
+  schedule:
+    - cron: '5 10 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  send-daily-summary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger daily summary email + research note
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl -fsS -X POST "$BACKEND_URL/api/notify/daily-summary" \
+            -H "X-Cron-Secret: $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            -d '{}'
+
+      - name: Alert on failure (backend unreachable or errored)
+        if: failure()
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+        run: |
+          curl -fsS -X POST "https://api.resend.com/emails" \
+            -H "Authorization: Bearer $RESEND_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"from\":\"AI Trader Agent <onboarding@resend.dev>\",\"to\":[\"$ALERT_EMAIL_TO\"],\"subject\":\"AI Trader Agent alert: daily summary failed\",\"html\":\"<p>The scheduled daily-close workflow failed to reach /api/notify/daily-summary. Check the GitHub Actions log and Render service status.</p>\"}"

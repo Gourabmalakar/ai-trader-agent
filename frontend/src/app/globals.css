@@ -1,13 +1,33 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* The installed tailwindcss package is v4 (see postcss.config.js -> @tailwindcss/postcss),
+   but this project's theme tokens (terminal/panel/grid/profit/loss/amber, shadow-glow) are
+   defined as a v3-style JS config. `@config` is Tailwind v4's supported bridge for keeping
+   that JS config instead of a full rewrite to CSS `@theme` tokens. The old `@tailwind
+   base/components/utilities` directives from v3 are NOT understood by v4 and silently
+   produced no CSS at all — that was the actual cause of the unstyled/broken-looking UI. */
+@import 'tailwindcss';
+@config '../../tailwind.config.ts';
 
 :root {
   color-scheme: dark;
 }
 
+html {
+  background:
+    radial-gradient(circle at top left, rgba(34, 197, 94, 0.12), transparent 28%),
+    radial-gradient(circle at top right, rgba(245, 158, 11, 0.1), transparent 24%),
+    linear-gradient(180deg, #020617 0%, #050816 52%, #020617 100%);
+}
+
 body {
   margin: 0;
-  background: radial-gradient(circle at top left, rgba(0, 255, 156, 0.08), transparent 28%), #05070d;
+  min-height: 100vh;
+  background: transparent;
   color: #eef4ff;
+  font-feature-settings: 'ss01' on, 'ss02' on;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+}
+
+* {
+  box-sizing: border-box;
 }

@@ -1,15 +1,20 @@
 import type { DashboardData } from '@/types/dashboard';
 
+function getBackendBaseUrl(): string | null {
+  return process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_BACKEND_URL || null;
+}
+
 export async function getDashboardData(): Promise<DashboardData> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL;
-  const dashboardUrl = baseUrl ? `${baseUrl}/api/dashboard` : '/api/dashboard';
-  try {
-    const response = await fetch(dashboardUrl, { next: { revalidate: 30 } });
-    if (response.ok) {
-      return await response.json();
+  const baseUrl = getBackendBaseUrl();
+  if (baseUrl) {
+    try {
+      const response = await fetch(`${baseUrl}/api/dashboard`, { cache: 'no-store' });
+      if (response.ok) {
+        return await response.json();
+      }
+    } catch {
+      // Fall through to offline demo mode
     }
-  } catch {
-    // Fall through to offline demo mode
   }
 
   // Fallback demo mode: preserve layout and avoid showing any live-like metrics.
@@ -22,13 +27,35 @@ export async function getDashboardData(): Promise<DashboardData> {
       totalReturn: 0,
       benchmarkReturn: 0,
       alpha: 0,
-      marketRegime: 'UNKNOWN'
+      marketRegime: 'UNKNOWN',
+      startingCapital: 0,
+      inceptionDate: null,
+      tradeCount: 0,
+      buyCount: 0,
+      sellCount: 0,
+      cashUtilizationPct: 0,
+      deploymentPct: 0,
+      openPositions: 0
+    },
+    comparison: {
+      inceptionDate: null,
+      startingCapital: 0,
+      agentValue: 0,
+      agentReturnPct: 0,
+      agentProfit: 0,
+      niftyValue: 0,
+      niftyReturnPct: 0,
+      niftyProfit: 0,
+      alphaPct: 0
     },
     scheduler: {
       status: 'OFFLINE',
       lastRun: new Date().toISOString(),
       nextMarketOpen: new Date().toISOString(),
-      tradingWindow: '09:15-15:30 IST'
+      tradingWindow: '09:15-15:30 IST',
+      lastAgentCycle: null,
+      lastMarketDataAt: null,
+      lastNewsAt: null
     },
     holdings: [],
     trades: [],
@@ -39,6 +66,10 @@ export async function getDashboardData(): Promise<DashboardData> {
       highRiskCount: 0,
       positiveCount: 0,
       items: []
+    },
+    publicSignals: {
+      fundamentals: [],
+      headlines: []
     },
     investmentThesis: {
       summary: 'Live strategy data is unavailable. The backend is currently offline or unreachable.',
@@ -58,12 +89,18 @@ export async function getDashboardData(): Promise<DashboardData> {
       drivers: [],
       bias: 'Offline'
     },
+    dataStatus: {
+      source: 'No connected backend',
+      updatedAt: null,
+      message: 'The paper-trading backend is offline.',
+      persistence: 'No paper account data is being displayed.'
+    },
     isFallback: true
   };
 }
 
 export async function askAgent(message: string): Promise<string> {
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL;
+  const baseUrl = getBackendBaseUrl();
   if (baseUrl) {
     try {
       const res = await fetch(`${baseUrl}/api/chat`, {

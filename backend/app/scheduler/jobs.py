@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable
+from typing import Optional, Callable
 
 from app.scheduler.calendar import is_market_open, next_market_open, to_ist
 
@@ -19,7 +19,7 @@ class TradingScheduler:
     def __init__(self, trading_cycle: Callable[[datetime], object], after_hours_cycle: Callable[[datetime], object]):
         self.trading_cycle = trading_cycle
         self.after_hours_cycle = after_hours_cycle
-        self.last_status: SchedulerStatus | None = None
+        self.last_status: Optional[SchedulerStatus] = None
 
     def run_once(self, now: datetime) -> object:
         current = to_ist(now)

@@ -18,4 +18,17 @@ class AnalystAgent:
             f"Volatility estimate is {features.get('volatility', 0):.2%}",
         ]
         confidence = min(0.95, max(0.05, abs(score)))
-        return AgentDecision(symbol=symbol, action=action, confidence=confidence, target_weight=0.05, reasoning=reasoning, metadata=features)
+        target_weight = min(0.08, max(0.0, 0.015 + (max(score, 0.0) * 0.045)))
+        if action == OrderSide.SELL:
+            target_weight = 0.0
+        elif action == "HOLD":
+            target_weight = min(0.03, target_weight)
+
+        return AgentDecision(
+            symbol=symbol,
+            action=action,
+            confidence=confidence,
+            target_weight=target_weight,
+            reasoning=reasoning,
+            metadata=features,
+        )
