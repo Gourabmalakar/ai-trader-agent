@@ -99,6 +99,7 @@ def health() -> dict:
         "mode": "MARKET_OPEN" if is_market_open(now) else "AFTER_HOURS",
         "now": now.isoformat(),
         "next_market_open": next_market_open(now).isoformat(),
+        "database": loop.store.connection_status(),
     }
 
 

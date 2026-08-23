@@ -30,6 +30,20 @@ class StateStore:
             return None
         return psycopg.connect(self.dsn, autocommit=True)
 
+    def connection_status(self) -> dict:
+        """Definitive, live answer to 'is persistence actually working right now' — used by
+        /health so this never has to be diagnosed by symptom-watching again."""
+        if not self.dsn:
+            return {"configured": False, "connected": False, "detail": "DATABASE_URL is not set; state is in-memory only and resets on every deploy."}
+        if psycopg is None:
+            return {"configured": True, "connected": False, "detail": "DATABASE_URL is set but the psycopg driver isn't installed."}
+        try:
+            conn = self._connect()
+            conn.close()
+            return {"configured": True, "connected": True, "detail": "Connected to Postgres; state persists across deploys."}
+        except Exception as error:
+            return {"configured": True, "connected": False, "detail": f"DATABASE_URL is set but the connection failed: {error}"}
+
     def ensure_schema(self) -> None:
         if self._schema_ready:
             return
