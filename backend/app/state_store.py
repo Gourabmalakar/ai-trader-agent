@@ -5,7 +5,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 try:
     import psycopg
@@ -17,7 +17,7 @@ except ImportError:  # pragma: no cover - optional until deps are installed in d
 
 @dataclass
 class StateStore:
-    dsn: str | None = None
+    dsn: Optional[str] = None
     _memory: dict[str, dict[str, Any]] = field(default_factory=dict)
     _schema_ready: bool = False
 

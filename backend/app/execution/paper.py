@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 from app.config import settings
 from app.models import MarketTick, Order, OrderSide, OrderStatus, Trade
 from app.portfolio.ledger import PortfolioLedger
@@ -7,11 +9,11 @@ from app.risk.manager import RiskManager
 
 
 class PaperExecutionEngine:
-    def __init__(self, ledger: PortfolioLedger, risk_manager: RiskManager | None = None):
+    def __init__(self, ledger: PortfolioLedger, risk_manager: Optional[RiskManager] = None):
         self.ledger = ledger
         self.risk_manager = risk_manager or RiskManager()
 
-    def execute(self, order: Order, tick: MarketTick, latest_prices: dict[str, float]) -> Trade:
+    def execute(self, order: Order, tick: MarketTick, latest_prices: dict[str, float], provider: str = "quant_only") -> Trade:
         risk = self.risk_manager.evaluate_order(order, tick, self.ledger, latest_prices, order.timestamp)
         if not risk.approved:
             trade = Trade(
@@ -26,6 +28,7 @@ class PaperExecutionEngine:
                 timestamp=order.timestamp,
                 reasoning_id=order.reasoning_id,
                 rejection_reason=risk.reason,
+                provider=provider,
             )
             self.ledger.apply_trade(trade, tick.sector)
             return trade
@@ -44,6 +47,7 @@ class PaperExecutionEngine:
             status=OrderStatus.FILLED_PAPER,
             timestamp=order.timestamp,
             reasoning_id=order.reasoning_id,
+            provider=provider,
         )
         self.ledger.apply_trade(trade, tick.sector)
         return trade

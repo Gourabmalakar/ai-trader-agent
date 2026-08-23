@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Optional
 
 from app.config import settings
 from app.models import OrderSide, Position, Trade
@@ -54,7 +55,7 @@ class PortfolioLedger:
 
         self.trades.append(trade)
 
-    def snapshot(self, now: datetime, latest_prices: dict[str, float], benchmark_value: float | None = None) -> dict:
+    def snapshot(self, now: datetime, latest_prices: dict[str, float], benchmark_value: Optional[float] = None) -> dict:
         invested = sum(position.quantity * latest_prices.get(symbol, position.average_price) for symbol, position in self.positions.items())
         total = self.cash + invested
         snapshot = {

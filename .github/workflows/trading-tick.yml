@@ -1,0 +1,37 @@
+name: Trading tick
+
+# Fires roughly hourly across the NSE trading window (09:15-15:30 IST = 03:45-10:00 UTC),
+# weekdays only. The backend independently re-checks is_market_day/is_market_open and NSE
+# holidays, so a stray tick on a holiday is a safe no-op.
+on:
+  schedule:
+    - cron: '45 3-9 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  run-trading-cycle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger backend trading cycle
+        id: trigger
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          curl -fsS -X POST "$BACKEND_URL/api/cron/run" \
+            -H "X-Cron-Secret: $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            -d '{}'
+
+      # Backstop alert: fires directly via Resend if the backend call above failed or the
+      # backend was unreachable, since a down backend can't email its own failure.
+      - name: Alert on failure (backend unreachable or errored)
+        if: failure()
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+        run: |
+          curl -fsS -X POST "https://api.resend.com/emails" \
+            -H "Authorization: Bearer $RESEND_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{\"from\":\"AI Trader Agent <onboarding@resend.dev>\",\"to\":[\"$ALERT_EMAIL_TO\"],\"subject\":\"AI Trader Agent alert: trading tick failed\",\"html\":\"<p>The scheduled trading-tick workflow failed to reach /api/cron/run. Check the GitHub Actions log and Render service status.</p>\"}"
