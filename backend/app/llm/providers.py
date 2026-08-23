@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Optional
 
 import httpx
@@ -9,6 +10,42 @@ import httpx
 from app.config import settings
 
 logger = logging.getLogger("ai_trader_agent.llm")
+
+# Gemini's "-latest" model aliases route to shared capacity that frequently returns 503
+# "currently experiencing high demand" — observed as transient in practice (Google's own error
+# message says so), so a couple of short-backoff retries meaningfully cuts how often a real,
+# working API key still ends up falling all the way through to quant-only.
+_RETRYABLE_STATUS_CODES = {429, 503}
+_MAX_ATTEMPTS = 3
+_RETRY_BACKOFF_SECONDS = 1.5
+
+
+def _post_gemini(url: str, payload: dict) -> httpx.Response:
+    last_error: Optional[Exception] = None
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
+        try:
+            response = httpx.post(
+                url,
+                headers={"X-goog-api-key": settings.gemini_api_key, "Content-Type": "application/json"},
+                json=payload,
+                timeout=25,
+            )
+            if response.status_code in _RETRYABLE_STATUS_CODES and attempt < _MAX_ATTEMPTS:
+                logger.warning("gemini call got HTTP %s (attempt %s/%s), retrying", response.status_code, attempt, _MAX_ATTEMPTS)
+                time.sleep(_RETRY_BACKOFF_SECONDS * attempt)
+                continue
+            response.raise_for_status()
+            return response
+        except httpx.HTTPStatusError as error:
+            last_error = error
+            break
+        except Exception as error:  # network errors etc. are also worth one retry
+            last_error = error
+            if attempt < _MAX_ATTEMPTS:
+                time.sleep(_RETRY_BACKOFF_SECONDS * attempt)
+                continue
+            break
+    raise last_error  # noqa: RSE102 - always set by the loop above before this is reached
 
 
 def parse_json_response(text: str) -> Optional[dict]:
@@ -53,10 +90,9 @@ def call_gemini_json(system_prompt: str, user_content: str, *, max_output_tokens
         return None
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.gemini_model}:generateContent"
     try:
-        response = httpx.post(
+        response = _post_gemini(
             url,
-            headers={"X-goog-api-key": settings.gemini_api_key, "Content-Type": "application/json"},
-            json={
+            {
                 "system_instruction": {"parts": [{"text": system_prompt}]},
                 "contents": [{"parts": [{"text": user_content}]}],
                 "generationConfig": {
@@ -65,9 +101,7 @@ def call_gemini_json(system_prompt: str, user_content: str, *, max_output_tokens
                     "responseMimeType": "application/json",
                 },
             },
-            timeout=25,
         )
-        response.raise_for_status()
         data = response.json()
         candidates = data.get("candidates") or []
         if not candidates:
@@ -90,10 +124,9 @@ def call_gemini_text(system_prompt: str, user_content: str, *, max_output_tokens
         return None
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.gemini_model}:generateContent"
     try:
-        response = httpx.post(
+        response = _post_gemini(
             url,
-            headers={"X-goog-api-key": settings.gemini_api_key, "Content-Type": "application/json"},
-            json={
+            {
                 "system_instruction": {"parts": [{"text": system_prompt}]},
                 "contents": [{"parts": [{"text": user_content}]}],
                 "generationConfig": {
@@ -101,9 +134,7 @@ def call_gemini_text(system_prompt: str, user_content: str, *, max_output_tokens
                     "temperature": settings.gemini_temperature,
                 },
             },
-            timeout=25,
         )
-        response.raise_for_status()
         data = response.json()
         candidates = data.get("candidates") or []
         if not candidates:
