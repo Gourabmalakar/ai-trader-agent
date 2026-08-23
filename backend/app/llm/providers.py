@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Optional
 
 import httpx
 
 from app.config import settings
+
+logger = logging.getLogger("ai_trader_agent.llm")
 
 
 def parse_json_response(text: str) -> Optional[dict]:
@@ -32,6 +35,18 @@ def parse_json_response(text: str) -> Optional[dict]:
     return None
 
 
+def _log_failure(provider: str, error: Exception) -> None:
+    """Log exactly why an LLM call failed. Callers still degrade gracefully (return None), but
+    this is what actually lets a real cause ('invalid API key', 'quota exceeded', a malformed
+    request) show up in the backend's logs instead of silently, indistinguishably falling back
+    to quant-only every time."""
+    if isinstance(error, httpx.HTTPStatusError):
+        body = error.response.text[:500] if error.response is not None else ""
+        logger.warning("%s call failed: HTTP %s - %s", provider, error.response.status_code if error.response is not None else "?", body)
+    else:
+        logger.warning("%s call failed: %s: %s", provider, type(error).__name__, error)
+
+
 def call_gemini_json(system_prompt: str, user_content: str, *, max_output_tokens: Optional[int] = None) -> Optional[dict]:
     """Call Gemini and return a parsed JSON dict, or None on any failure."""
     if not settings.gemini_api_key:
@@ -56,11 +71,16 @@ def call_gemini_json(system_prompt: str, user_content: str, *, max_output_tokens
         data = response.json()
         candidates = data.get("candidates") or []
         if not candidates:
+            logger.warning("gemini call returned no candidates: %s", json.dumps(data)[:500])
             return None
         parts = candidates[0].get("content", {}).get("parts", [])
         text = "".join(part.get("text", "") for part in parts)
-        return parse_json_response(text)
-    except Exception:
+        parsed = parse_json_response(text)
+        if parsed is None:
+            logger.warning("gemini response was not valid JSON: %s", text[:500])
+        return parsed
+    except Exception as error:
+        _log_failure("gemini", error)
         return None
 
 
@@ -87,11 +107,13 @@ def call_gemini_text(system_prompt: str, user_content: str, *, max_output_tokens
         data = response.json()
         candidates = data.get("candidates") or []
         if not candidates:
+            logger.warning("gemini call returned no candidates: %s", json.dumps(data)[:500])
             return None
         parts = candidates[0].get("content", {}).get("parts", [])
         text = "".join(part.get("text", "") for part in parts).strip()
         return text or None
-    except Exception:
+    except Exception as error:
+        _log_failure("gemini", error)
         return None
 
 
@@ -110,8 +132,12 @@ def call_claude_json(system_prompt: str, user_content: str, *, max_output_tokens
             messages=[{"role": "user", "content": user_content}],
         )
         text = "".join(block.text for block in response.content if getattr(block, "type", None) == "text")
-        return parse_json_response(text)
-    except Exception:
+        parsed = parse_json_response(text)
+        if parsed is None:
+            logger.warning("claude response was not valid JSON: %s", text[:500])
+        return parsed
+    except Exception as error:
+        _log_failure("claude", error)
         return None
 
 
@@ -131,5 +157,6 @@ def call_claude_text(system_prompt: str, user_content: str, *, max_output_tokens
         )
         text = "".join(block.text for block in response.content if getattr(block, "type", None) == "text").strip()
         return text or None
-    except Exception:
+    except Exception as error:
+        _log_failure("claude", error)
         return None
