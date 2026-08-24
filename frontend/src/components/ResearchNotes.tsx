@@ -1,6 +1,6 @@
 import type { DashboardData } from '@/types/dashboard';
 
-function NoteCard({ label, note }: { label: string; note?: { text: string; provider: string; generatedAt: string } | null }) {
+function NoteCard({ label, note, pendingMessage }: { label: string; note?: { text: string; provider: string; generatedAt: string } | null; pendingMessage: string }) {
   return (
     <div className="rounded-2xl border border-white/8 bg-black/20 p-4">
       <div className="flex items-center justify-between gap-2">
@@ -14,7 +14,7 @@ function NoteCard({ label, note }: { label: string; note?: { text: string; provi
       {note ? (
         <p className="mt-3 text-sm leading-7 text-slate-300 whitespace-pre-line">{note.text}</p>
       ) : (
-        <p className="mt-3 text-sm leading-6 text-slate-500">Not published yet — this note is generated automatically at market close (daily) and on the first trading day of each month.</p>
+        <p className="mt-3 text-sm leading-6 text-slate-500">{pendingMessage}</p>
       )}
     </div>
   );
@@ -28,8 +28,8 @@ export function ResearchNotes({ research }: { research: DashboardData['research'
         <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-[11px] uppercase tracking-[0.3em] text-slate-400">CIO notes</span>
       </div>
       <div className="mt-4 grid gap-4 md:grid-cols-2">
-        <NoteCard label="Daily market outlook" note={research?.daily} />
-        <NoteCard label="Monthly portfolio review" note={research?.monthly} />
+        <NoteCard label="Weekly market outlook" note={research?.weekly} pendingMessage="Not published yet — generated automatically every Friday at market close." />
+        <NoteCard label="Monthly portfolio review" note={research?.monthly} pendingMessage="Not published yet — generated automatically on the last trading day of each month at market close." />
       </div>
     </div>
   );

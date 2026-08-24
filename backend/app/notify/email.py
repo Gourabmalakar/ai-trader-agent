@@ -64,6 +64,21 @@ def send_daily_summary(payload: dict) -> bool:
     return _send(subject, html)
 
 
+def send_weekly_outlook(payload: dict, note_text: str) -> bool:
+    comparison = payload.get("comparison", {})
+    subject = f"AI Trader Agent — weekly outlook ({comparison.get('inceptionDate', 'n/a')} -> today)"
+    formatted_note = note_text.replace("\n", "<br/>") if note_text else "No weekly note was generated this cycle."
+    html = f"""
+    <h2>AI Trader Agent — Weekly Market Outlook</h2>
+    <p><b>Agent value:</b> &#8377;{comparison.get('agentValue')} ({comparison.get('agentReturnPct')}%)<br/>
+    <b>NIFTY value:</b> &#8377;{comparison.get('niftyValue')} ({comparison.get('niftyReturnPct')}%)<br/>
+    <b>Alpha:</b> {comparison.get('alphaPct')}%</p>
+    <div>{formatted_note}</div>
+    <p style='color:#888;font-size:12px'>Paper trading only. No real money or brokerage orders involved.</p>
+    """
+    return _send(subject, html)
+
+
 def send_monthly_review(payload: dict, note_text: str) -> bool:
     comparison = payload.get("comparison", {})
     subject = f"AI Trader Agent — monthly review ({comparison.get('inceptionDate', 'n/a')} -> today)"

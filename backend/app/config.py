@@ -40,7 +40,10 @@ class Settings:
     gemini_temperature: float = float(os.getenv("GEMINI_TEMPERATURE", "0.3"))
     gemini_trading_daily_cap: int = int(os.getenv("GEMINI_TRADING_DAILY_CAP", "10"))
     gemini_research_daily_cap: int = int(os.getenv("GEMINI_RESEARCH_DAILY_CAP", "2"))
-    gemini_chat_daily_cap: int = int(os.getenv("GEMINI_CHAT_DAILY_CAP", "20"))
+    # Chat is scoped out of LLM usage entirely by default (cap 0) so trading decisions and
+    # research notes get the whole of Gemini's limited free-tier quota; the chat box still
+    # works, it just always answers from the deterministic dashboard-state fallback.
+    gemini_chat_daily_cap: int = int(os.getenv("GEMINI_CHAT_DAILY_CAP", "0"))
 
     # --- Claude (fallback LLM, used only when Gemini fails/errors) ---
     anthropic_api_key: Optional[str] = os.getenv("ANTHROPIC_API_KEY")
@@ -48,7 +51,7 @@ class Settings:
     anthropic_max_output_tokens: int = int(os.getenv("ANTHROPIC_MAX_OUTPUT_TOKENS", "700"))
     claude_trading_daily_cap: int = int(os.getenv("CLAUDE_TRADING_DAILY_CAP", "3"))
     claude_research_daily_cap: int = int(os.getenv("CLAUDE_RESEARCH_DAILY_CAP", "1"))
-    claude_chat_daily_cap: int = int(os.getenv("CLAUDE_CHAT_DAILY_CAP", "5"))
+    claude_chat_daily_cap: int = int(os.getenv("CLAUDE_CHAT_DAILY_CAP", "0"))
 
     # --- Cron / API auth ---
     cron_secret: Optional[str] = os.getenv("CRON_SECRET")

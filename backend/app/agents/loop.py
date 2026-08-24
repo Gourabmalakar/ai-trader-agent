@@ -55,7 +55,7 @@ class PortfolioAgentLoop:
         self.last_shortlist_signature: Optional[list] = None
         self.last_engine_provider: str = "quant_only"
         self.last_engine_note: str = "No trading cycle has run yet."
-        self.research: dict[str, Any] = {"daily": None, "monthly": None}
+        self.research: dict[str, Any] = {"weekly": None, "monthly": None}
         self._load_state()
 
     # ------------------------------------------------------------------
@@ -200,7 +200,7 @@ class PortfolioAgentLoop:
                 "last_shortlist_signature": None,
                 "last_engine_provider": "quant_only",
                 "last_engine_note": "No trading cycle has run yet.",
-                "research": {"daily": None, "monthly": None},
+                "research": {"weekly": None, "monthly": None},
             },
         )
         self.ledger.cash = float(state.get("cash", self.ledger.cash))
@@ -229,7 +229,7 @@ class PortfolioAgentLoop:
         self.last_shortlist_signature = state.get("last_shortlist_signature")
         self.last_engine_provider = state.get("last_engine_provider", "quant_only")
         self.last_engine_note = state.get("last_engine_note", "No trading cycle has run yet.")
-        self.research = state.get("research") or {"daily": None, "monthly": None}
+        self.research = state.get("research") or {"weekly": None, "monthly": None}
 
     def _persist_state(self) -> None:
         self.store.save(self.state_key, self._ledger_to_state())
@@ -721,12 +721,12 @@ class PortfolioAgentLoop:
             exposure[sector] = round(exposure.get(sector, 0.0) + (value / total_value * 100 if total_value else 0.0), 2)
         return exposure
 
-    def generate_daily_research(self, now: datetime) -> dict[str, Any]:
-        result = decision_engine.get_research_note(self._research_context(), self.store, kind="daily")
+    def generate_weekly_research(self, now: datetime) -> dict[str, Any]:
+        result = decision_engine.get_research_note(self._research_context(), self.store, kind="weekly")
         if result:
-            self.research["daily"] = {"text": result.text, "provider": result.provider, "generatedAt": now.isoformat()}
+            self.research["weekly"] = {"text": result.text, "provider": result.provider, "generatedAt": now.isoformat()}
             self._persist_state()
-        return self.research["daily"] or {}
+        return self.research["weekly"] or {}
 
     def generate_monthly_research(self, now: datetime) -> dict[str, Any]:
         result = decision_engine.get_research_note(self._research_context(), self.store, kind="monthly")
