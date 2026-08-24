@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
@@ -18,6 +19,8 @@ from app.models import AgentDecision, MarketTick, Order, OrderSide, OrderStatus,
 from app.portfolio.ledger import PortfolioLedger
 from app.state_store import StateStore
 from app.scheduler.calendar import is_market_open, next_market_open
+
+logger = logging.getLogger("ai_trader_agent.loop")
 
 
 class PortfolioAgentLoop:
@@ -254,6 +257,29 @@ class PortfolioAgentLoop:
         self.benchmark_history = synthesize(benchmark_start, 0.0006)
         self.latest_prices = {symbol: prices[-1] for symbol, prices in self.price_history.items() if prices}
 
+    # NSE circuit filters cap most single-stock moves at ~20% in a session; a bigger jump between
+    # two ~15-minute-apart fetches is almost certainly a bad tick from the data provider, not a
+    # real price. Without this guard, one bad tick can spike the whole portfolio valuation (and
+    # every derived number: the chart, daily P&L, alpha) for a single cycle.
+    MAX_PLAUSIBLE_PRICE_MOVE = 0.25
+
+    def _sanitize_against_previous(self, new_prices: dict[str, float], new_history: dict[str, list[float]]) -> None:
+        if not self.latest_prices:
+            return
+        for symbol, price in list(new_prices.items()):
+            previous = self.latest_prices.get(symbol)
+            if not previous or previous <= 0 or price <= 0:
+                continue
+            change = abs(price - previous) / previous
+            if change > self.MAX_PLAUSIBLE_PRICE_MOVE:
+                self.data_error = (
+                    f"Discarded an implausible price tick for {symbol}: "
+                    f"₹{previous:,.2f} -> ₹{price:,.2f} ({change:.0%} move in one refresh); kept the prior price."
+                )
+                new_prices[symbol] = previous
+                if symbol in new_history and new_history[symbol]:
+                    new_history[symbol][-1] = previous
+
     def _refresh_market_data(self, now: datetime) -> None:
         if self.last_data_at and now - self.last_data_at < timedelta(minutes=15):
             return
@@ -263,27 +289,44 @@ class PortfolioAgentLoop:
             closes = data.get("Close")
             if closes is None or closes.empty:
                 raise ValueError("No closing prices returned")
-            self.price_history = {
+            new_price_history = {
                 symbol: [float(value) for value in closes[symbol].dropna().tolist()]
                 for symbol in self.symbols
                 if symbol in closes and not closes[symbol].dropna().empty
             }
-            self.benchmark_history = [float(value) for value in closes[settings.benchmark_symbol].dropna().tolist()]
-            self.latest_prices = {symbol: prices[-1] for symbol, prices in self.price_history.items() if prices}
-            if not self.latest_prices or len(self.benchmark_history) < 2:
+            new_benchmark_history = [float(value) for value in closes[settings.benchmark_symbol].dropna().tolist()]
+            new_latest_prices = {symbol: prices[-1] for symbol, prices in new_price_history.items() if prices}
+            if not new_latest_prices or len(new_benchmark_history) < 2:
                 raise ValueError("Incomplete market data returned")
+
+            self._sanitize_against_previous(new_latest_prices, new_price_history)
+            self.price_history = new_price_history
+            self.benchmark_history = new_benchmark_history
+            self.latest_prices = new_latest_prices
             self.last_data_at = now
-            self.data_error = None
+            if not self.data_error or "Discarded an implausible price tick" not in self.data_error:
+                self.data_error = None
         except Exception as error:
             self.data_error = f"Market data unavailable: {error}; using synthetic fallback"
             self._synthesize_universe_prices()
             self.last_data_at = now
 
     def _public_fundamental_snapshot(self, symbol: str) -> dict[str, Any]:
-        try:
-            info = yf.Ticker(symbol).info or {}
-        except Exception:
-            info = {}
+        # Yahoo Finance's `.info` scrape occasionally comes back empty from cloud-provider IPs
+        # under load; one quick retry recovers most of these without much added latency, and a
+        # log line on total failure means a real, persistent block is visible in the logs instead
+        # of silently showing as a wall of "N/A" with no explanation.
+        info: dict[str, Any] = {}
+        for attempt in range(2):
+            try:
+                info = yf.Ticker(symbol).info or {}
+                if info:
+                    break
+            except Exception as error:
+                if attempt == 1:
+                    logger.warning("fundamentals fetch failed for %s: %s: %s", symbol, type(error).__name__, error)
+        if not info:
+            logger.warning("fundamentals fetch for %s returned empty data after retry", symbol)
         snapshot = {
             "symbol": symbol,
             "name": self.symbols.get(symbol, symbol),
@@ -442,6 +485,49 @@ class PortfolioAgentLoop:
             ]
         )
 
+    def _apply_risk_discipline(self, quant_lookup: dict[str, AgentDecision]) -> None:
+        """Hard, deterministic risk rules that override any quant/LLM signal on currently-held
+        positions — the fund's equivalent of a standing stop-loss/take-profit order, not a
+        discretionary call. This is what makes the agent self-correct on losers instead of just
+        holding and hoping, and is applied last so no upstream decision (including an LLM one)
+        can talk its way past it."""
+        for symbol, position in self.ledger.positions.items():
+            price = self.latest_prices.get(symbol)
+            if not price or position.average_price <= 0:
+                continue
+            unrealized_pct = (price - position.average_price) / position.average_price
+            existing = quant_lookup.get(symbol)
+            metadata = existing.metadata if existing else {}
+
+            if unrealized_pct <= settings.stop_loss_pct:
+                quant_lookup[symbol] = AgentDecision(
+                    symbol=symbol,
+                    action=OrderSide.SELL,
+                    confidence=0.99,
+                    target_weight=0.0,
+                    reasoning=[
+                        f"Stop-loss triggered: down {unrealized_pct:.1%} from the ₹{position.average_price:,.2f} average "
+                        f"cost, breaching the fund's {settings.stop_loss_pct:.0%} risk limit — exiting regardless of the "
+                        "quant/LLM signal."
+                    ],
+                    metadata=metadata,
+                    provider="risk_stop_loss",
+                )
+            elif unrealized_pct >= settings.take_profit_trim_pct and (not existing or existing.action != OrderSide.SELL):
+                quant_lookup[symbol] = AgentDecision(
+                    symbol=symbol,
+                    action=OrderSide.SELL,
+                    confidence=0.7,
+                    target_weight=settings.max_position_weight / 2,
+                    reasoning=[
+                        f"Profit-taking trim: up {unrealized_pct:.1%} from the ₹{position.average_price:,.2f} average cost, "
+                        f"past the fund's {settings.take_profit_trim_pct:.0%} trim threshold — locking in part of the gain "
+                        "rather than letting a winner round-trip."
+                    ],
+                    metadata=metadata,
+                    provider="risk_take_profit",
+                )
+
     # ------------------------------------------------------------------
     # Trading cycle
     # ------------------------------------------------------------------
@@ -468,7 +554,13 @@ class PortfolioAgentLoop:
             self._refresh_public_signals(now, shortlist)
 
         signature = self._shortlist_signature(shortlist, quant_lookup)
-        if shortlist and signature != self.last_shortlist_signature:
+        # Retry the LLM whenever the shortlist actually changed, OR whenever the last attempt
+        # never got a real review at all (fell back to quant_only) — otherwise a single transient
+        # Gemini/Claude failure would get "cached" and silently reused for the rest of the day,
+        # which is exactly what happened on the first live trading day: one early 503 meant every
+        # subsequent cycle kept reusing the same templated quant-only reasoning all session long.
+        needs_review = signature != self.last_shortlist_signature or self.last_engine_provider == "quant_only"
+        if shortlist and needs_review:
             context = self._engine_context(shortlist, quant_lookup, regime)
             context["asOf"] = now.isoformat()
             shortlist_quant_decisions = [quant_lookup[symbol] for symbol in shortlist]
@@ -487,6 +579,7 @@ class PortfolioAgentLoop:
                     quant_lookup[symbol] = previous_by_symbol[symbol]
             self.last_engine_note = "Shortlist unchanged since the last cycle; reused the prior LLM review to save tokens."
 
+        self._apply_risk_discipline(quant_lookup)
         decisions = list(quant_lookup.values())
 
         # Only log/persist shortlisted (actually-reviewed) symbols as decision events — logging all ~50
@@ -553,15 +646,63 @@ class PortfolioAgentLoop:
     # ------------------------------------------------------------------
     # Research notes (daily / monthly)
     # ------------------------------------------------------------------
-    def _research_context(self) -> dict[str, Any]:
+    def _universe_snapshot(self) -> list[dict[str, Any]]:
+        """Cheap, pure-math momentum/score snapshot across the FULL universe (not just the
+        shortlist), used to give research notes genuine market/sector-wide coverage instead of
+        only commentary on the handful of stocks the fund happens to be reviewing right now."""
+        rows = []
+        for symbol in self.symbols:
+            features = self._features(symbol)
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "name": self.symbols.get(symbol, symbol),
+                    "sector": self.sectors.get(symbol, "Unknown"),
+                    "momentum20d": round(features.get("momentum_20", 0.0), 4),
+                    "score": round(features.get("score", 0.0), 4),
+                }
+            )
+        return rows
+
+    def _sector_momentum(self, universe: list[dict[str, Any]]) -> dict[str, float]:
+        totals: dict[str, list[float]] = {}
+        for row in universe:
+            totals.setdefault(row["sector"], []).append(row["momentum20d"])
+        return {sector: round(sum(values) / len(values), 4) for sector, values in totals.items() if values}
+
+    def _broad_market_news(self, now: datetime) -> list[dict]:
+        """A handful of index-level headlines (not tied to any specific shortlisted stock), fetched
+        only when generating a research note (daily/monthly), so the note can speak to the market
+        as a whole rather than only the fund's own current holdings/shortlist."""
+        try:
+            raw_news = yf.Ticker(settings.benchmark_symbol).news or []
+        except Exception:
+            raw_news = []
+        items = []
+        for item in raw_news[:6]:
+            title = item.get("title") or item.get("content", {}).get("title")
+            if not title:
+                continue
+            summary = item.get("summary") or title
+            items.append({"title": title, "impact": self.news.classify(title, summary).value, "summary": summary[:200]})
+        return items
+
+    def _research_context(self, now: Optional[datetime] = None) -> dict[str, Any]:
+        now = now or datetime.now(self.ist)
         total_value = self.ledger.total_value(self.latest_prices)
         regime = self.market_regime.classify(self.benchmark_history or [1.0, 1.0])
         cash_pct = (self.ledger.cash / total_value * 100) if total_value else 100.0
+        universe = self._universe_snapshot()
+        ranked = sorted(universe, key=lambda row: row["momentum20d"], reverse=True)
         return {
             "comparison": self._comparison_payload(total_value),
             "holdingsBySector": self._sector_exposure(total_value),
             "recentDecisions": self.decision_log[-15:],
-            "marketIntelligence": self.news.summarize_market_intelligence(self.public_news),
+            "fundHeadlines": self.news.summarize_market_intelligence(self.public_news),
+            "broadMarketHeadlines": self._broad_market_news(now),
+            "sectorMomentum20d": self._sector_momentum(universe),
+            "topGainers": ranked[:5],
+            "topLosers": ranked[-5:],
             "capitalAllocation": {
                 "marketRegime": regime["regime"],
                 "recommendedExposurePct": round(regime.get("target_exposure", 0.65) * 100, 1),
@@ -597,6 +738,18 @@ class PortfolioAgentLoop:
     # ------------------------------------------------------------------
     # Dashboard payload
     # ------------------------------------------------------------------
+    def _today_opening_value(self, now: datetime, fallback: float) -> float:
+        """The portfolio's value as of its first snapshot today — the correct baseline for
+        'Daily P&L'. Comparing against just the previous (hourly) snapshot instead, as before,
+        actually measured since-last-cycle P&L and mislabeled it as daily."""
+        today = now.date().isoformat()
+        todays_snapshots = [s for s in self.ledger.snapshots if s["timestamp"][:10] == today]
+        if todays_snapshots:
+            return todays_snapshots[0]["total_value"]
+        if self.ledger.snapshots:
+            return self.ledger.snapshots[-1]["total_value"]
+        return fallback
+
     def _performance(self) -> list[dict]:
         snapshots = self.ledger.snapshots[-180:]
         if not snapshots:
@@ -663,7 +816,7 @@ class PortfolioAgentLoop:
         comparison = self._comparison_payload(total_value)
         portfolio_return = comparison["agentReturnPct"]
         benchmark_return = comparison["niftyReturnPct"]
-        daily_pnl = total_value - (self.ledger.snapshots[-2]["total_value"] if len(self.ledger.snapshots) > 1 else total_value)
+        daily_pnl = total_value - self._today_opening_value(now, total_value)
         invested_value = total_value - self.ledger.cash
         trade_count = len([trade for trade in self.ledger.trades if trade.status == OrderStatus.FILLED_PAPER])
         buy_count = len([trade for trade in self.ledger.trades if trade.status == OrderStatus.FILLED_PAPER and trade.side == OrderSide.BUY])
@@ -686,6 +839,16 @@ class PortfolioAgentLoop:
                     "conviction": next((decision.confidence for decision in decisions if decision.symbol == symbol), 0),
                 }
             )
+        sector_totals: dict[str, float] = {}
+        for holding in holdings:
+            sector_totals[holding["sector"]] = sector_totals.get(holding["sector"], 0.0) + holding["weight"]
+        cash_weight = (self.ledger.cash / total_value * 100) if total_value else 100.0
+        sector_allocation = sorted(
+            [{"sector": sector, "weightPct": round(weight, 2)} for sector, weight in sector_totals.items()],
+            key=lambda row: row["weightPct"],
+            reverse=True,
+        )
+        sector_allocation.append({"sector": "Cash", "weightPct": round(cash_weight, 2)})
         trades = [
             {
                 "time": trade.timestamp.isoformat(),
@@ -777,6 +940,7 @@ class PortfolioAgentLoop:
                 "lastEngineNote": self.last_engine_note,
             },
             "holdings": sorted(holdings, key=lambda holding: holding["weight"], reverse=True),
+            "sectorAllocation": sector_allocation,
             "trades": trades,
             "performance": performance,
             "decisions": self.decision_log[-30:][::-1],

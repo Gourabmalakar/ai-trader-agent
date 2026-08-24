@@ -1,18 +1,30 @@
 name: Monthly portfolio review
 
-# Fires once on the 1st calendar day of each month at ~15:40 IST (10:10 UTC). If the 1st
-# lands on an NSE holiday/weekend the note still generates from the latest available state;
-# re-run manually via workflow_dispatch if you want it regenerated on the next trading day.
+# Runs daily at ~15:40 IST (10:10 UTC) on weekdays, but only actually calls the backend on the
+# LAST trading day of the calendar month (checked in IST) at market close — a monthly review
+# published on the day the month closes, not days later on the 1st of the next month.
 on:
   schedule:
-    - cron: '10 10 1 * *'
+    - cron: '10 10 * * 1-5'
   workflow_dispatch:
 
 jobs:
   generate-monthly-review:
     runs-on: ubuntu-latest
     steps:
+      - name: Check if today is the last day of the month (IST)
+        id: check
+        run: |
+          today_month=$(TZ=Asia/Kolkata date +%m)
+          tomorrow_month=$(TZ=Asia/Kolkata date -d "+1 day" +%m)
+          if [ "$today_month" != "$tomorrow_month" ]; then
+            echo "is_last_day=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_last_day=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Trigger monthly research note
+        if: steps.check.outputs.is_last_day == 'true'
         env:
           BACKEND_URL: ${{ secrets.BACKEND_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}

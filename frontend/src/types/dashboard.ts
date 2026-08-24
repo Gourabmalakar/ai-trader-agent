@@ -41,6 +41,7 @@ export type DashboardData = {
     lastEngineNote?: string;
   };
   holdings: Array<{ symbol: string; name: string; sector?: string; weight: number; pnl: number; risk: string; conviction: number }>;
+  sectorAllocation?: Array<{ sector: string; weightPct: number }>;
   trades: Array<{
     time: string;
     symbol: string;

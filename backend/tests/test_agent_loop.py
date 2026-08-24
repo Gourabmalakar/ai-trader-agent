@@ -2,6 +2,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from app.agents.loop import PortfolioAgentLoop
+from app.models import AgentDecision, OrderSide, Position
 
 IST = ZoneInfo("Asia/Kolkata")
 
@@ -46,6 +47,73 @@ def test_comparison_pins_to_inception_snapshot_not_lookback_window_start():
 
     expected_pct = round(((22000.0 / 21500.0) - 1) * 100, 2)
     assert payload["niftyReturnPct"] == expected_pct
+
+
+def test_sanitize_against_previous_discards_implausible_price_jump():
+    loop = PortfolioAgentLoop()
+    loop.latest_prices = {"RELIANCE.NS": 1000.0}
+    new_prices = {"RELIANCE.NS": 3000.0}  # 200% jump — no NSE circuit filter allows this
+    new_history = {"RELIANCE.NS": [990.0, 1000.0, 3000.0]}
+
+    loop._sanitize_against_previous(new_prices, new_history)
+
+    assert new_prices["RELIANCE.NS"] == 1000.0  # discarded, kept the last known-good price
+    assert new_history["RELIANCE.NS"][-1] == 1000.0
+    assert "implausible" in (loop.data_error or "")
+
+
+def test_sanitize_against_previous_allows_plausible_moves():
+    loop = PortfolioAgentLoop()
+    loop.latest_prices = {"RELIANCE.NS": 1000.0}
+    new_prices = {"RELIANCE.NS": 1080.0}  # 8% move — plausible in a session
+    new_history = {"RELIANCE.NS": [990.0, 1000.0, 1080.0]}
+
+    loop._sanitize_against_previous(new_prices, new_history)
+
+    assert new_prices["RELIANCE.NS"] == 1080.0
+
+
+def test_apply_risk_discipline_forces_stop_loss_sell():
+    loop = PortfolioAgentLoop()
+    loop.ledger.positions["RELIANCE.NS"] = Position("RELIANCE.NS", 10, 1000.0, "Energy")
+    loop.latest_prices = {"RELIANCE.NS": 900.0}  # -10%, breaches the -8% stop-loss
+
+    quant_lookup: dict[str, AgentDecision] = {
+        "RELIANCE.NS": AgentDecision("RELIANCE.NS", "HOLD", 0.4, 0.02, ["quant says hold"])
+    }
+    loop._apply_risk_discipline(quant_lookup)
+
+    decision = quant_lookup["RELIANCE.NS"]
+    assert decision.action == OrderSide.SELL
+    assert decision.target_weight == 0.0
+    assert decision.provider == "risk_stop_loss"
+
+
+def test_apply_risk_discipline_trims_on_take_profit():
+    loop = PortfolioAgentLoop()
+    loop.ledger.positions["RELIANCE.NS"] = Position("RELIANCE.NS", 10, 1000.0, "Energy")
+    loop.latest_prices = {"RELIANCE.NS": 1250.0}  # +25%, past the +20% trim threshold
+
+    quant_lookup: dict[str, AgentDecision] = {
+        "RELIANCE.NS": AgentDecision("RELIANCE.NS", OrderSide.BUY, 0.4, 0.05, ["quant says buy more"])
+    }
+    loop._apply_risk_discipline(quant_lookup)
+
+    decision = quant_lookup["RELIANCE.NS"]
+    assert decision.action == OrderSide.SELL
+    assert decision.provider == "risk_take_profit"
+
+
+def test_daily_pnl_baseline_is_todays_opening_value_not_last_cycle():
+    loop = PortfolioAgentLoop()
+    morning = datetime(2026, 8, 24, 9, 15, tzinfo=IST)
+    later_same_day = datetime(2026, 8, 24, 14, 0, tzinfo=IST)
+    loop.ledger.snapshot(morning, {}, 22000.0)  # today's opening snapshot: 1,00,00,000
+    loop.ledger.snapshot(later_same_day, {}, 22100.0)  # an intraday snapshot at the same value
+
+    opening_value = loop._today_opening_value(later_same_day, fallback=999)
+
+    assert opening_value == loop.ledger.snapshots[0]["total_value"]
 
 
 def test_run_cycle_records_a_snapshot_even_outside_market_hours():

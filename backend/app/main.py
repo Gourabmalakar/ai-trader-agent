@@ -14,7 +14,7 @@ from app.agents.loop import PortfolioAgentLoop
 from app.backtesting.engine import BacktestEngine
 from app.config import settings
 from app.llm.chat import ask_llm
-from app.notify.email import send_alert, send_daily_summary
+from app.notify.email import send_alert, send_daily_summary, send_monthly_review
 from app.scheduler.calendar import is_market_day, is_market_open, next_market_open
 
 logger = logging.getLogger("ai_trader_agent")
@@ -155,13 +155,14 @@ def notify_monthly_review(x_cron_secret: Optional[str] = Header(default=None)) -
     _require_cron_secret(x_cron_secret)
     now = datetime.now(IST)
     try:
-        loop.build_dashboard_payload(now, run_cycle=False)
+        payload = loop.build_dashboard_payload(now, run_cycle=False)
         note = loop.generate_monthly_research(now)
+        sent = send_monthly_review(payload, note.get("text", "")) if note else False
     except Exception as error:  # noqa: BLE001
         logger.exception("Monthly review failed")
         send_alert("Monthly review generation failed", f"{error}\n\n{traceback.format_exc()[-2000:]}")
         raise HTTPException(status_code=500, detail="Monthly review failed; an alert email was sent.") from error
-    return {"ok": True, "note": note, "timestamp": now.isoformat()}
+    return {"ok": True, "note": note, "emailSent": sent, "timestamp": now.isoformat()}
 
 
 @app.get("/api/backtest/sample")

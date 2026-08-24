@@ -4,10 +4,12 @@ const PROVIDER_CLASS: Record<string, string> = {
   gemini: 'text-emerald-300',
   claude: 'text-violet-300',
   quant_only: 'text-slate-500',
+  risk_stop_loss: 'text-rose-300',
+  risk_take_profit: 'text-sky-300',
 };
 
 function parseProvider(line: string): { provider: string | null; text: string } {
-  const match = line.match(/\[(gemini|claude|quant_only)\]\s*·?\s*/);
+  const match = line.match(/\[(gemini|claude|quant_only|risk_stop_loss|risk_take_profit)\]\s*·?\s*/);
   if (!match) return { provider: null, text: line };
   return { provider: match[1], text: line.replace(match[0], '') };
 }

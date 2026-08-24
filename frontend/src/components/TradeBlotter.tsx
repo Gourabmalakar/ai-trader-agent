@@ -4,12 +4,16 @@ const PROVIDER_LABEL: Record<string, string> = {
   gemini: 'Gemini',
   claude: 'Claude (fallback)',
   quant_only: 'Quant-only',
+  risk_stop_loss: 'Stop-loss',
+  risk_take_profit: 'Take-profit',
 };
 
 const PROVIDER_CLASS: Record<string, string> = {
   gemini: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200',
   claude: 'border-violet-400/30 bg-violet-400/10 text-violet-200',
   quant_only: 'border-white/10 bg-black/20 text-slate-400',
+  risk_stop_loss: 'border-rose-400/30 bg-rose-400/10 text-rose-200',
+  risk_take_profit: 'border-sky-400/30 bg-sky-400/10 text-sky-200',
 };
 
 function ProviderBadge({ provider }: { provider?: string }) {
