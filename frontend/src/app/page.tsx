@@ -8,6 +8,7 @@ import { TradeBlotter } from '@/components/TradeBlotter';
 import { MarketIntelligence } from '@/components/MarketIntelligence';
 import { ResearchNotes } from '@/components/ResearchNotes';
 import { CapitalAllocation } from '@/components/CapitalAllocation';
+import { SectorAllocation } from '@/components/SectorAllocation';
 import { GovernancePanel } from '@/components/GovernancePanel';
 import { AgentChatModal } from '@/components/AgentChatModal';
 import { DashboardRefresh } from '@/components/DashboardRefresh';
@@ -91,7 +92,10 @@ export default async function Home() {
           <SchedulerPanel scheduler={data.scheduler} />
         </section>
 
-        <CapitalAllocation allocation={data.capitalAllocation} />
+        <section className="grid gap-6 xl:grid-cols-[1.3fr_1fr]">
+          <CapitalAllocation allocation={data.capitalAllocation} />
+          <SectorAllocation allocation={data.sectorAllocation} />
+        </section>
 
         <section className="grid gap-6 xl:grid-cols-[1.35fr_0.95fr]">
           <HoldingsTable holdings={data.holdings} />

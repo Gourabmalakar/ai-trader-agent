@@ -29,6 +29,10 @@ class Settings:
     shortlist_size: int = int(os.getenv("SHORTLIST_SIZE", "12"))
     shortlist_score_threshold: float = float(os.getenv("SHORTLIST_SCORE_THRESHOLD", "0.12"))
 
+    # --- Risk discipline: self-correction on open positions, independent of quant/LLM signals ---
+    stop_loss_pct: float = float(os.getenv("STOP_LOSS_PCT", "-0.08"))
+    take_profit_trim_pct: float = float(os.getenv("TAKE_PROFIT_TRIM_PCT", "0.20"))
+
     # --- Gemini (primary trading + research LLM) ---
     gemini_api_key: Optional[str] = os.getenv("GEMINI_API_KEY")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
