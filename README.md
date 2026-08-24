@@ -53,8 +53,9 @@ Set these repo secrets under Settings → Secrets and variables → Actions:
 
 Workflows:
 - `trading-tick.yml` — hourly, 09:15–15:30 IST, weekdays → `POST /api/cron/run`.
-- `daily-close.yml` — ~15:35 IST, weekdays → `POST /api/notify/daily-summary` (email + daily research note).
-- `monthly-review.yml` — 1st of each month → `POST /api/notify/monthly-review`.
+- `daily-close.yml` — ~15:35 IST, weekdays → `POST /api/notify/daily-summary` (trade summary email only).
+- `weekly-outlook.yml` — Fridays ~15:35 IST → `POST /api/notify/weekly-outlook` (research note + email).
+- `monthly-review.yml` — last trading day of each month ~15:40 IST → `POST /api/notify/monthly-review`.
 - `keepalive.yml` — every 10 min → `GET /health`, keeps the free Render instance warm.
 
 Each workflow also alerts directly via Resend on failure, independent of the backend, so a fully-down
@@ -90,6 +91,13 @@ cd backend && python -m pytest -q
 - If nothing material changed since the last cycle, the LLM call is skipped entirely and the prior
   decisions are reused.
 - Claude is a hard-capped fallback (default 3 trading calls/day) used only when Gemini errors or is
-  rate-limited; daily/monthly research notes have their own small, separate budget.
+  rate-limited; weekly/monthly research notes have their own small, separate budget.
+- The chat box is intentionally scoped out of LLM usage entirely (cap 0 by default) so trading
+  decisions and research get the whole of Gemini's limited free-tier daily quota; it still answers
+  every question, just from the deterministic dashboard-state fallback.
 - If both providers are unavailable/capped, the deterministic quant engine still runs and trades are
   clearly tagged `quant_only` in the dashboard — the agent never goes silent.
+- Note: Gemini's free tier can be as low as 20 requests/day for a given model, which real hourly
+  trading + weekly/monthly research can exhaust on its own. If you see persistent `quant_only`
+  cycles, check Render's logs for `gemini call failed` entries — enabling billing on the Google AI
+  Studio project raises this quota substantially and Gemini Flash models are inexpensive per call.

@@ -14,7 +14,7 @@ from app.agents.loop import PortfolioAgentLoop
 from app.backtesting.engine import BacktestEngine
 from app.config import settings
 from app.llm.chat import ask_llm
-from app.notify.email import send_alert, send_daily_summary, send_monthly_review
+from app.notify.email import send_alert, send_daily_summary, send_monthly_review, send_weekly_outlook
 from app.scheduler.calendar import is_market_day, is_market_open, next_market_open
 
 logger = logging.getLogger("ai_trader_agent")
@@ -137,17 +137,34 @@ def cron_run(x_cron_secret: Optional[str] = Header(default=None)) -> dict:
 
 @app.post("/api/notify/daily-summary")
 def notify_daily_summary(x_cron_secret: Optional[str] = Header(default=None)) -> dict:
+    # Deliberately does NOT generate a research note — that's weekly now (see
+    # /api/notify/weekly-outlook) to keep Gemini's limited free-tier daily quota mostly
+    # available for actual trading decisions rather than split with a note nobody reads daily.
     _require_cron_secret(x_cron_secret)
     now = datetime.now(IST)
     try:
         payload = loop.build_dashboard_payload(now, run_cycle=False)
-        loop.generate_daily_research(now)
         sent = send_daily_summary(payload)
     except Exception as error:  # noqa: BLE001
         logger.exception("Daily summary failed")
         send_alert("Daily summary generation failed", f"{error}\n\n{traceback.format_exc()[-2000:]}")
         raise HTTPException(status_code=500, detail="Daily summary failed; an alert email was sent.") from error
     return {"ok": True, "emailSent": sent, "timestamp": now.isoformat()}
+
+
+@app.post("/api/notify/weekly-outlook")
+def notify_weekly_outlook(x_cron_secret: Optional[str] = Header(default=None)) -> dict:
+    _require_cron_secret(x_cron_secret)
+    now = datetime.now(IST)
+    try:
+        payload = loop.build_dashboard_payload(now, run_cycle=False)
+        note = loop.generate_weekly_research(now)
+        sent = send_weekly_outlook(payload, note.get("text", "")) if note else False
+    except Exception as error:  # noqa: BLE001
+        logger.exception("Weekly outlook failed")
+        send_alert("Weekly outlook generation failed", f"{error}\n\n{traceback.format_exc()[-2000:]}")
+        raise HTTPException(status_code=500, detail="Weekly outlook failed; an alert email was sent.") from error
+    return {"ok": True, "note": note, "emailSent": sent, "timestamp": now.isoformat()}
 
 
 @app.post("/api/notify/monthly-review")

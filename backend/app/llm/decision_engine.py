@@ -127,14 +127,15 @@ def get_trading_decisions(
 
 
 def get_research_note(context: dict[str, Any], store: StateStore, *, kind: str) -> Optional[ResearchResult]:
-    """Generate a daily or monthly research note. kind is 'daily' or 'monthly'.
+    """Generate a weekly or monthly research note. kind is 'weekly' or 'monthly'.
     Uses its own small, separate budget so research never competes with trading calls.
     Returns None if both providers are unavailable/capped (caller should skip publishing).
     """
     purpose = "research"
     prompt = (
-        f"Write today's {kind} market outlook and portfolio note." if kind == "daily"
-        else f"Write this month's portfolio performance review and outlook."
+        "Write this week's market outlook and portfolio note."
+        if kind == "weekly"
+        else "Write this month's portfolio performance review and outlook."
     )
     user_content = f"{prompt}\nDATA: {json.dumps(context, separators=(',', ':'))}"
 

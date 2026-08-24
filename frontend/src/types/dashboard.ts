@@ -119,7 +119,7 @@ export type DashboardData = {
     persistence: string;
   };
   research?: {
-    daily: { text: string; provider: string; generatedAt: string } | null;
+    weekly: { text: string; provider: string; generatedAt: string } | null;
     monthly: { text: string; provider: string; generatedAt: string } | null;
   };
   capitalAllocation?: {
