@@ -229,7 +229,15 @@ class PortfolioAgentLoop:
         self.last_shortlist_signature = state.get("last_shortlist_signature")
         self.last_engine_provider = state.get("last_engine_provider", "quant_only")
         self.last_engine_note = state.get("last_engine_note", "No trading cycle has run yet.")
-        self.research = state.get("research") or {"weekly": None, "monthly": None}
+        # Migrate any state persisted before the daily->weekly research rename: old rows have a
+        # "daily" key instead of "weekly" (which was always null in practice, so there's nothing
+        # real to carry over) — without this, generate_weekly_research()'s dict access would
+        # KeyError on state that predates the rename.
+        loaded_research = state.get("research") or {}
+        self.research = {
+            "weekly": loaded_research.get("weekly", loaded_research.get("daily")),
+            "monthly": loaded_research.get("monthly"),
+        }
 
     def _persist_state(self) -> None:
         self.store.save(self.state_key, self._ledger_to_state())
