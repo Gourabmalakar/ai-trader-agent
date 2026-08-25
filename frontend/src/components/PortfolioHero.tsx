@@ -34,32 +34,10 @@ type Comparison = {
 function MetricCard({ label, value, subtext, tone = 'neutral', size = 'md' }: { label: string; value: string | number; subtext?: string; tone?: 'profit' | 'loss' | 'neutral'; size?: 'md' | 'lg' }) {
   const color = tone === 'profit' ? 'text-emerald-300' : tone === 'loss' ? 'text-rose-300' : 'text-slate-100';
   return (
-    <div className="rounded-[1.75rem] border border-white/8 bg-white/[0.04] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.25)] backdrop-blur transition hover:border-white/15 hover:bg-white/[0.06]">
+    <div className="min-w-0 overflow-hidden rounded-[1.75rem] border border-white/8 bg-white/[0.04] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.25)] backdrop-blur transition hover:border-white/15 hover:bg-white/[0.06]">
       <p className="text-[11px] font-medium uppercase tracking-[0.3em] text-slate-400">{label}</p>
-      <p className={`mt-3 tabular-nums font-semibold tracking-tight ${size === 'lg' ? 'text-3xl sm:text-4xl' : 'text-2xl'} ${color}`}>{value}</p>
-      {subtext && <p className="mt-2 text-sm leading-6 text-slate-400">{subtext}</p>}
-    </div>
-  );
-}
-
-function AlphaBar({ agentReturn, niftyReturn }: { agentReturn: number; niftyReturn: number }) {
-  const max = Math.max(Math.abs(agentReturn), Math.abs(niftyReturn), 1);
-  const agentWidth = Math.max(2, Math.min(100, (Math.abs(agentReturn) / max) * 100));
-  const niftyWidth = Math.max(2, Math.min(100, (Math.abs(niftyReturn) / max) * 100));
-  return (
-    <div className="mt-5 space-y-2">
-      <div className="flex items-center gap-3">
-        <span className="w-14 text-[11px] uppercase tracking-[0.2em] text-emerald-300">Agent</span>
-        <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/5">
-          <div className={`h-full rounded-full ${agentReturn >= 0 ? 'bg-emerald-400' : 'bg-rose-400'}`} style={{ width: `${agentWidth}%` }} />
-        </div>
-      </div>
-      <div className="flex items-center gap-3">
-        <span className="w-14 text-[11px] uppercase tracking-[0.2em] text-amber-300">NIFTY</span>
-        <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/5">
-          <div className={`h-full rounded-full ${niftyReturn >= 0 ? 'bg-amber-400' : 'bg-rose-400'}`} style={{ width: `${niftyWidth}%` }} />
-        </div>
-      </div>
+      <p className={`mt-3 truncate tabular-nums font-semibold tracking-tight ${size === 'lg' ? 'text-2xl sm:text-3xl' : 'text-xl sm:text-2xl'} ${color}`}>{value}</p>
+      {subtext && <p className="mt-2 truncate text-sm leading-6 text-slate-400">{subtext}</p>}
     </div>
   );
 }
@@ -111,7 +89,6 @@ export function PortfolioHero({ portfolio, comparison }: { portfolio: HeroPortfo
               tone={(comparison?.alphaPct ?? portfolio.alpha) >= 0 ? 'profit' : 'loss'}
             />
           </div>
-          <AlphaBar agentReturn={comparison?.agentReturnPct ?? portfolio.totalReturn} niftyReturn={comparison?.niftyReturnPct ?? portfolio.benchmarkReturn} />
         </div>
 
         <div className="grid gap-4">

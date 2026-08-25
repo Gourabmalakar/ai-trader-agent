@@ -335,10 +335,24 @@ class PortfolioAgentLoop:
                     logger.warning("fundamentals fetch failed for %s: %s: %s", symbol, type(error).__name__, error)
         if not info:
             logger.warning("fundamentals fetch for %s returned empty data after retry", symbol)
+
+        # fast_info hits a different, lighter Yahoo endpoint than .info's full quoteSummary scrape
+        # (the same one price/volume data already reliably uses), so it can still supply market
+        # cap even when the heavier .info call comes back empty. PE/margins/debt/FCF have no
+        # equivalent in fast_info and are only available via .info — if that endpoint is genuinely
+        # blocked for this deployment's outbound IP, those fields will stay unavailable regardless
+        # of retries; that is a data-provider limitation, not a bug in this code.
+        market_cap = info.get("marketCap")
+        if market_cap is None:
+            try:
+                market_cap = yf.Ticker(symbol).fast_info.get("marketCap")
+            except Exception:
+                pass
+
         snapshot = {
             "symbol": symbol,
             "name": self.symbols.get(symbol, symbol),
-            "marketCap": info.get("marketCap"),
+            "marketCap": market_cap,
             "trailingPE": info.get("trailingPE"),
             "forwardPE": info.get("forwardPE"),
             "priceToBook": info.get("priceToBook"),
@@ -493,6 +507,56 @@ class PortfolioAgentLoop:
             ]
         )
 
+    def _apply_fundamentals_and_news_tilt(self, quant_lookup: dict[str, AgentDecision], shortlist: list[str]) -> None:
+        """A deterministic value/quality/news overlay applied to every shortlisted BUY decision,
+        regardless of which engine produced it (LLM or quant fallback). Momentum/relative-strength
+        alone never looks at what a company actually is or what's being reported about it right
+        now; this is what makes even a quant_only cycle (unavoidable given Gemini's free-tier rate
+        limits) genuinely fundamentals- and news-aware instead of purely price-technical."""
+        fundamentals_by_symbol = {item["symbol"]: item for item in self.public_fundamentals}
+        for symbol in shortlist:
+            decision = quant_lookup.get(symbol)
+            if not decision or decision.action != OrderSide.BUY:
+                continue
+
+            fundamentals = fundamentals_by_symbol.get(symbol, {})
+            multiplier = 1.0
+            notes: list[str] = []
+
+            pe = fundamentals.get("trailingPE")
+            if isinstance(pe, (int, float)) and pe > 0:
+                if pe > 60:
+                    multiplier *= 0.7
+                    notes.append(f"trimmed for a rich {pe:.0f}x trailing PE")
+                elif pe < 15:
+                    multiplier *= 1.1
+                    notes.append(f"sized up for an attractive {pe:.0f}x trailing PE")
+
+            margins = fundamentals.get("profitMargins")
+            if isinstance(margins, (int, float)):
+                if margins < 0.03:
+                    multiplier *= 0.75
+                    notes.append(f"trimmed for a thin {margins:.1%} profit margin")
+                elif margins > 0.20:
+                    multiplier *= 1.05
+
+            debt_equity = fundamentals.get("debtToEquity")
+            if isinstance(debt_equity, (int, float)) and debt_equity > 200:
+                multiplier *= 0.8
+                notes.append(f"trimmed for a high {debt_equity:.0f} debt/equity")
+
+            news_risk = self.news.risk_adjustment(self.public_news, symbol)
+            news_multiplier = news_risk.get("position_size_multiplier", 1.0)
+            if news_multiplier < 1.0:
+                notes.append(news_risk["reason"].lower())
+            multiplier *= news_multiplier
+
+            if abs(multiplier - 1.0) > 0.01:
+                decision.target_weight = round(max(0.0, decision.target_weight * multiplier), 4)
+                if notes:
+                    decision.reasoning = decision.reasoning + [f"Fundamentals/news overlay: {'; '.join(notes)}."]
+                decision.metadata = {**decision.metadata, "fundamentalsNewsMultiplier": round(multiplier, 3)}
+
     def _apply_risk_discipline(self, quant_lookup: dict[str, AgentDecision]) -> None:
         """Hard, deterministic risk rules that override any quant/LLM signal on currently-held
         positions — the fund's equivalent of a standing stop-loss/take-profit order, not a
@@ -587,6 +651,7 @@ class PortfolioAgentLoop:
                     quant_lookup[symbol] = previous_by_symbol[symbol]
             self.last_engine_note = "Shortlist unchanged since the last cycle; reused the prior LLM review to save tokens."
 
+        self._apply_fundamentals_and_news_tilt(quant_lookup, shortlist)
         self._apply_risk_discipline(quant_lookup)
         decisions = list(quant_lookup.values())
 
@@ -758,8 +823,30 @@ class PortfolioAgentLoop:
             return self.ledger.snapshots[-1]["total_value"]
         return fallback
 
+    def _filter_outlier_snapshots(self, snapshots: list[dict]) -> list[dict]:
+        """Drop any already-persisted snapshot whose total_value differs from BOTH chronological
+        neighbors by more than the same plausibility bound used for live price ticks. This is
+        what keeps a single historical bad-tick snapshot (recorded before the fetch-time sanity
+        check existed) from permanently spiking the chart — it filters the display, it doesn't
+        rewrite the underlying audit trail."""
+        if len(snapshots) < 3:
+            return snapshots
+        kept = [snapshots[0]]
+        for index in range(1, len(snapshots) - 1):
+            previous_value = kept[-1]["total_value"]
+            current_value = snapshots[index]["total_value"]
+            next_value = snapshots[index + 1]["total_value"]
+            if previous_value and next_value:
+                change_from_prev = abs(current_value - previous_value) / previous_value
+                change_to_next = abs(next_value - current_value) / current_value if current_value else 1.0
+                if change_from_prev > self.MAX_PLAUSIBLE_PRICE_MOVE and change_to_next > self.MAX_PLAUSIBLE_PRICE_MOVE:
+                    continue  # an isolated spike/dip relative to both neighbors - drop it
+            kept.append(snapshots[index])
+        kept.append(snapshots[-1])
+        return kept
+
     def _performance(self) -> list[dict]:
-        snapshots = self.ledger.snapshots[-180:]
+        snapshots = self._filter_outlier_snapshots(self.ledger.snapshots[-180:])
         if not snapshots:
             return []
         baseline_portfolio = snapshots[0]["total_value"] or settings.starting_capital_inr
@@ -961,8 +1048,15 @@ class PortfolioAgentLoop:
                 "headlines": [self._news_to_dict(item) for item in market_intelligence_items],
             },
             "investmentThesis": {
-                "summary": "The agent ranks the full NIFTY 50 on momentum, relative strength versus NIFTY, and public fundamental health, shortlists the strongest signals, and has an LLM (Gemini, with Claude as a capped fallback) review and write the rationale for each trade.",
-                "focus": ["Relative strength", "Public fundamentals", "Cash-aware deployment", "Paper-only execution"],
+                "summary": "The agent ranks the full NIFTY 50 on 20-day momentum and relative strength versus NIFTY, then applies a value/quality tilt from public fundamentals (PE, margins, debt) and a news-risk overlay before sizing any position, shrinks overall exposure in risk-off market regimes, enforces a hard stop-loss and profit-taking trim on every open position, and has an LLM (Gemini, with Claude as a capped fallback) review and write the rationale when quota allows.",
+                "focus": [
+                    "Momentum + relative strength",
+                    "Value/quality fundamentals tilt",
+                    "News-risk overlay",
+                    "Regime-based exposure",
+                    "Stop-loss & profit-taking",
+                    "Paper-only execution",
+                ],
                 "watchlist": list(self.symbols),
             },
             "riskProfile": {
