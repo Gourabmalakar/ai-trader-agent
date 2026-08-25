@@ -1,11 +1,15 @@
 name: Trading tick
 
-# Fires roughly hourly across the NSE trading window (09:15-15:30 IST = 03:45-10:00 UTC),
-# weekdays only. The backend independently re-checks is_market_day/is_market_open and NSE
-# holidays, so a stray tick on a holiday is a safe no-op.
+# Fires every 15 minutes across (and a little beyond) the NSE trading window (09:15-15:30 IST =
+# 03:45-10:00 UTC), weekdays only. The backend independently re-checks is_market_day/
+# is_market_open and NSE holidays for actual trade execution, so ticks outside the real session
+# are safe no-ops that still record a (flat) snapshot. Denser ticks than hourly give the
+# performance chart a real intraday shape instead of ~7 sparse points/day; the LLM call itself
+# is still gated by the shortlist-unchanged skip in the backend, so this does not multiply
+# token usage anywhere near proportionally.
 on:
   schedule:
-    - cron: '45 3-9 * * 1-5'
+    - cron: '*/15 3-10 * * 1-5'
   workflow_dispatch:
 
 jobs:

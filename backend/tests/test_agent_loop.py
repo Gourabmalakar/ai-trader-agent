@@ -73,6 +73,59 @@ def test_sanitize_against_previous_allows_plausible_moves():
     assert new_prices["RELIANCE.NS"] == 1080.0
 
 
+def test_fundamentals_news_tilt_trims_expensive_thin_margin_position():
+    loop = PortfolioAgentLoop()
+    loop.public_fundamentals = [
+        {"symbol": "TITAN.NS", "trailingPE": 80, "profitMargins": 0.02, "debtToEquity": 50}
+    ]
+    quant_lookup = {"TITAN.NS": AgentDecision("TITAN.NS", OrderSide.BUY, 0.5, 0.06, ["quant buy"])}
+
+    loop._apply_fundamentals_and_news_tilt(quant_lookup, ["TITAN.NS"])
+
+    decision = quant_lookup["TITAN.NS"]
+    assert decision.target_weight < 0.06
+    assert "overlay" in decision.reasoning[-1].lower()
+
+
+def test_fundamentals_news_tilt_boosts_cheap_high_margin_position():
+    loop = PortfolioAgentLoop()
+    loop.public_fundamentals = [
+        {"symbol": "COALINDIA.NS", "trailingPE": 8, "profitMargins": 0.25, "debtToEquity": 20}
+    ]
+    quant_lookup = {"COALINDIA.NS": AgentDecision("COALINDIA.NS", OrderSide.BUY, 0.5, 0.05, ["quant buy"])}
+
+    loop._apply_fundamentals_and_news_tilt(quant_lookup, ["COALINDIA.NS"])
+
+    assert quant_lookup["COALINDIA.NS"].target_weight > 0.05
+
+
+def test_fundamentals_news_tilt_leaves_sell_decisions_untouched():
+    loop = PortfolioAgentLoop()
+    loop.public_fundamentals = [{"symbol": "ITC.NS", "trailingPE": 90, "profitMargins": 0.01}]
+    original = AgentDecision("ITC.NS", OrderSide.SELL, 0.5, 0.0, ["quant sell"])
+    quant_lookup = {"ITC.NS": original}
+
+    loop._apply_fundamentals_and_news_tilt(quant_lookup, ["ITC.NS"])
+
+    assert quant_lookup["ITC.NS"] is original
+
+
+def test_filter_outlier_snapshots_drops_isolated_spike():
+    loop = PortfolioAgentLoop()
+    snapshots = [
+        {"total_value": 1_000_000.0},
+        {"total_value": 1_005_000.0},
+        {"total_value": 2_500_000.0},  # isolated spike vs both neighbors
+        {"total_value": 1_010_000.0},
+        {"total_value": 1_012_000.0},
+    ]
+
+    filtered = loop._filter_outlier_snapshots(snapshots)
+
+    assert len(filtered) == 4
+    assert 2_500_000.0 not in [s["total_value"] for s in filtered]
+
+
 def test_apply_risk_discipline_forces_stop_loss_sell():
     loop = PortfolioAgentLoop()
     loop.ledger.positions["RELIANCE.NS"] = Position("RELIANCE.NS", 10, 1000.0, "Energy")

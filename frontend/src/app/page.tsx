@@ -118,27 +118,41 @@ export default async function Home() {
               <span className="rounded-full border border-white/10 bg-black/20 px-3 py-1 text-[11px] uppercase tracking-[0.3em] text-slate-400">Balance sheet and cashflow</span>
             </div>
             <div className="mt-4 grid gap-3 md:grid-cols-2">
-              {(data.publicSignals?.fundamentals ?? []).map((item) => (
-                <div key={item.symbol} className="rounded-2xl border border-white/8 bg-black/20 p-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <p className="font-semibold text-slate-100">{item.name}</p>
-                      <p className="text-xs uppercase tracking-[0.24em] text-slate-500">{item.symbol}</p>
+              {(data.publicSignals?.fundamentals ?? []).map((item) => {
+                const fields: Array<[string, string | null]> = [
+                  ['PE', item.trailingPE != null ? item.trailingPE.toFixed(1) : null],
+                  ['Fwd PE', item.forwardPE != null ? item.forwardPE.toFixed(1) : null],
+                  ['PB', item.priceToBook != null ? item.priceToBook.toFixed(1) : null],
+                  ['Debt/Equity', item.debtToEquity != null ? item.debtToEquity.toFixed(0) : null],
+                  ['Margins', item.profitMargins != null ? `${(item.profitMargins * 100).toFixed(1)}%` : null],
+                  ['Rev growth', item.revenueGrowth != null ? `${(item.revenueGrowth * 100).toFixed(1)}%` : null],
+                  ['FCF', item.freeCashflow != null ? formatCompactNumber(item.freeCashflow) : null],
+                  ['Earnings', item.earningsGrowth != null ? `${(item.earningsGrowth * 100).toFixed(1)}%` : null],
+                ];
+                const available = fields.filter(([, value]) => value !== null);
+                return (
+                  <div key={item.symbol} className="rounded-2xl border border-white/8 bg-black/20 p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <p className="font-semibold text-slate-100">{item.name}</p>
+                        <p className="text-xs uppercase tracking-[0.24em] text-slate-500">{item.symbol}</p>
+                      </div>
+                      <span className="text-sm text-slate-300">{item.marketCap != null ? formatCompactNumber(item.marketCap) : 'N/A'}</span>
                     </div>
-                    <span className="text-sm text-slate-300">{formatCompactNumber(item.marketCap)}</span>
+                    {available.length > 0 ? (
+                      <div className="mt-4 grid grid-cols-2 gap-2 text-sm text-slate-300">
+                        {available.map(([label, value]) => (
+                          <div key={label}>{label}: {value}</div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-4 text-xs text-slate-500">
+                        Ratios temporarily unavailable from the data provider for this symbol — market cap still updates independently.
+                      </p>
+                    )}
                   </div>
-                  <div className="mt-4 grid grid-cols-2 gap-2 text-sm text-slate-300">
-                    <div>PE: {item.trailingPE ?? 'N/A'}</div>
-                    <div>Fwd PE: {item.forwardPE ?? 'N/A'}</div>
-                    <div>PB: {item.priceToBook ?? 'N/A'}</div>
-                    <div>Debt/Equity: {item.debtToEquity ?? 'N/A'}</div>
-                    <div>Margins: {item.profitMargins ? `${(item.profitMargins * 100).toFixed(1)}%` : 'N/A'}</div>
-                    <div>Rev growth: {item.revenueGrowth ? `${(item.revenueGrowth * 100).toFixed(1)}%` : 'N/A'}</div>
-                    <div>FCF: {formatCompactNumber(item.freeCashflow)}</div>
-                    <div>Earnings: {item.earningsGrowth ? `${(item.earningsGrowth * 100).toFixed(1)}%` : 'N/A'}</div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
               {!(data.publicSignals?.fundamentals?.length) && (
                 <div className="rounded-2xl border border-white/8 bg-black/20 p-4 text-sm text-slate-400 md:col-span-2">
                   No public fundamental snapshot is currently available.
