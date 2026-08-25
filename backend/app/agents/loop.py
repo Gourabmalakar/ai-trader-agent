@@ -346,8 +346,10 @@ class PortfolioAgentLoop:
         if market_cap is None:
             try:
                 market_cap = yf.Ticker(symbol).fast_info.get("marketCap")
-            except Exception:
-                pass
+                if market_cap is None:
+                    logger.warning("fast_info fallback for %s also returned no marketCap", symbol)
+            except Exception as error:
+                logger.warning("fast_info fallback failed for %s: %s: %s", symbol, type(error).__name__, error)
 
         snapshot = {
             "symbol": symbol,

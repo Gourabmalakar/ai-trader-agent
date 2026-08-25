@@ -48,8 +48,14 @@ class GovernanceOfficer:
                         f"{trade.side.value} {trade.quantity} {trade.symbol} filled outside the 09:15-15:30 IST session.",
                     )
                 )
+            # notional is computed from the unrounded fill price at execution time, while
+            # trade.price is that same fill price rounded to paise — so a few-paisa-per-share
+            # gap between price*quantity and the recorded notional is expected rounding, not a
+            # bookkeeping error. Scale the tolerance with quantity so real fills never false-
+            # positive here while a genuinely fabricated notional still gets caught.
             expected_notional = round(trade.price * trade.quantity, 2)
-            if abs(expected_notional - round(trade.notional, 2)) > 0.5:
+            tolerance = max(0.5, 0.01 * trade.quantity)
+            if abs(expected_notional - round(trade.notional, 2)) > tolerance:
                 violations.append(
                     ComplianceViolation(
                         trade.symbol,

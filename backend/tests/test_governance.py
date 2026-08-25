@@ -53,6 +53,32 @@ def test_audit_flags_a_fill_recorded_outside_market_hours():
     assert any(v["rule"] == "trading_window" for v in report["violations"])
 
 
+def test_audit_tolerates_per_share_rounding_gap_proportional_to_quantity():
+    # Confirmed live: notional is computed from the unrounded fill price at execution time, so a
+    # large-quantity fill can legitimately differ from price*quantity by a few rupees of rounding
+    # (e.g. 1224 shares @ a price rounded to paise) without any real bookkeeping error.
+    ledger = PortfolioLedger()
+    now = datetime(2026, 8, 24, 10, 0, tzinfo=IST)
+    trade = Trade(
+        symbol="WIPRO.NS",
+        side=OrderSide.SELL,
+        quantity=1224,
+        price=179.59,
+        notional=219822.14,  # price*quantity = 219818.16, a plausible ~4-rupee rounding gap
+        fees=0.0,
+        slippage=0.0,
+        status=OrderStatus.FILLED_PAPER,
+        timestamp=now,
+        reasoning_id="sell-1",
+    )
+    ledger.apply_trade(trade, "IT")
+
+    report = GovernanceOfficer().audit(ledger, {"WIPRO.NS": 179.59}, ledger.total_value({"WIPRO.NS": 179.59}))
+
+    assert report["status"] == "CLEAN"
+    assert report["violations"] == []
+
+
 def test_audit_flags_inconsistent_notional_bookkeeping():
     ledger = PortfolioLedger()
     now = datetime(2026, 8, 24, 10, 0, tzinfo=IST)
