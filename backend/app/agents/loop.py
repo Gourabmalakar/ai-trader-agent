@@ -369,6 +369,39 @@ class PortfolioAgentLoop:
             self._synthesize_universe_prices()
             self.last_data_at = now
 
+    def _fill_computed_ratios(self, symbol: str, snapshot: dict[str, Any]) -> None:
+        """Compute PE/PB/margins/debt-equity/market-cap ourselves from the financial-statement
+        building blocks (_condensed_financials) plus the live price we already have — this is
+        what actually fixes fundamentals on a deployment where Yahoo's .info/.fast_info ratio
+        endpoints are blocked but the statement endpoints and price data are not. Only fills a
+        field that's still missing; never overwrites a real value from .info."""
+        price = self.latest_prices.get(symbol)
+        shares = snapshot.get("sharesOutstanding")
+        net_income_ttm = snapshot.get("netIncomeTTM")
+        revenue_ttm = snapshot.get("totalRevenueTTM")
+        total_equity = snapshot.get("totalEquityLatest")
+        total_debt = snapshot.get("totalDebtLatest")
+
+        if snapshot.get("marketCap") is None and price and shares:
+            snapshot["marketCap"] = round(price * shares, 0)
+
+        market_cap = snapshot.get("marketCap")
+
+        if snapshot.get("profitMargins") is None and net_income_ttm is not None and revenue_ttm:
+            snapshot["profitMargins"] = round(net_income_ttm / revenue_ttm, 4)
+
+        if snapshot.get("trailingPE") is None and market_cap and net_income_ttm and net_income_ttm > 0:
+            snapshot["trailingPE"] = round(market_cap / net_income_ttm, 2)
+
+        if snapshot.get("priceToBook") is None and market_cap and total_equity:
+            snapshot["priceToBook"] = round(market_cap / total_equity, 2)
+
+        if snapshot.get("debtToEquity") is None and total_debt is not None and total_equity:
+            snapshot["debtToEquity"] = round((total_debt / total_equity) * 100, 1)
+
+        if snapshot.get("freeCashflow") is None and snapshot.get("freeCashflowTrend"):
+            snapshot["freeCashflow"] = snapshot["freeCashflowTrend"][0]
+
     def _public_fundamental_snapshot(self, symbol: str) -> dict[str, Any]:
         # Yahoo Finance's `.info` scrape occasionally comes back empty from cloud-provider IPs
         # under load; one quick retry recovers most of these without much added latency, and a
@@ -415,6 +448,7 @@ class PortfolioAgentLoop:
             "earningsGrowth": info.get("earningsGrowth"),
         }
         snapshot.update(self._condensed_financials(symbol))
+        self._fill_computed_ratios(symbol, snapshot)
 
         # If Yahoo's ratio fields are still empty (the persistent-block scenario retries/fast_info
         # can't fix), try Financial Modeling Prep — a key-authenticated API rather than a browser-
@@ -429,31 +463,66 @@ class PortfolioAgentLoop:
 
         return snapshot
 
+    @staticmethod
+    def _first_matching_row(frame, candidate_names: list[str]):
+        if frame is None or frame.empty:
+            return None
+        for name in candidate_names:
+            if name in frame.index:
+                row = frame.loc[name].dropna()
+                if len(row):
+                    return row
+        return None
+
     def _condensed_financials(self, symbol: str) -> dict[str, Any]:
-        """Best-effort condensed PnL/balance-sheet/cashflow trend for the given symbol.
-        Kept to a handful of numbers so the LLM payload stays small; never raises."""
+        """Condensed PnL/balance-sheet/cashflow data for the given symbol, pulled from Yahoo's
+        financial-statement endpoints — confirmed to keep working even when the .info/.fast_info
+        ratio endpoints are empty on some deployments (a cloud-IP restriction on those specific
+        endpoints, not on the statements themselves). Includes the raw building blocks
+        (revenue, equity, shares outstanding) so _public_fundamental_snapshot can compute PE/PB/
+        margins/debt-equity itself instead of depending on the blocked endpoints for them."""
         result: dict[str, Any] = {
             "netIncomeTrend": None,
+            "netIncomeTTM": None,
+            "totalRevenueTTM": None,
             "totalDebtLatest": None,
+            "totalEquityLatest": None,
+            "sharesOutstanding": None,
             "freeCashflowTrend": None,
         }
         try:
             ticker = yf.Ticker(symbol)
+
             financials = ticker.quarterly_financials
-            if financials is not None and not financials.empty and "Net Income" in financials.index:
-                row = financials.loc["Net Income"].dropna()
-                result["netIncomeTrend"] = [round(float(v), 0) for v in row.tolist()[:4]]
+            net_income_row = self._first_matching_row(financials, ["Net Income"])
+            if net_income_row is not None:
+                trend = net_income_row.tolist()[:4]
+                result["netIncomeTrend"] = [round(float(v), 0) for v in trend]
+                if len(trend) == 4:
+                    result["netIncomeTTM"] = round(float(sum(trend)), 0)
+            revenue_row = self._first_matching_row(financials, ["Total Revenue"])
+            if revenue_row is not None and len(revenue_row) >= 4:
+                result["totalRevenueTTM"] = round(float(sum(revenue_row.tolist()[:4])), 0)
+
             balance_sheet = ticker.quarterly_balance_sheet
-            if balance_sheet is not None and not balance_sheet.empty and "Total Debt" in balance_sheet.index:
-                row = balance_sheet.loc["Total Debt"].dropna()
-                if len(row):
-                    result["totalDebtLatest"] = round(float(row.iloc[0]), 0)
+            debt_row = self._first_matching_row(balance_sheet, ["Total Debt"])
+            if debt_row is not None:
+                result["totalDebtLatest"] = round(float(debt_row.iloc[0]), 0)
+            equity_row = self._first_matching_row(
+                balance_sheet, ["Stockholders Equity", "Total Equity Gross Minority Interest", "Common Stock Equity"]
+            )
+            if equity_row is not None:
+                result["totalEquityLatest"] = round(float(equity_row.iloc[0]), 0)
+            shares_row = self._first_matching_row(balance_sheet, ["Ordinary Shares Number", "Share Issued"])
+            if shares_row is not None:
+                result["sharesOutstanding"] = float(shares_row.iloc[0])
+
             cashflow = ticker.quarterly_cashflow
-            if cashflow is not None and not cashflow.empty and "Free Cash Flow" in cashflow.index:
-                row = cashflow.loc["Free Cash Flow"].dropna()
-                result["freeCashflowTrend"] = [round(float(v), 0) for v in row.tolist()[:4]]
-        except Exception:
-            pass
+            fcf_row = self._first_matching_row(cashflow, ["Free Cash Flow"])
+            if fcf_row is not None:
+                result["freeCashflowTrend"] = [round(float(v), 0) for v in fcf_row.tolist()[:4]]
+        except Exception as error:
+            logger.warning("condensed financials fetch failed for %s: %s: %s", symbol, type(error).__name__, error)
         return result
 
     def _refresh_public_signals(self, now: datetime, symbols: list[str]) -> None:

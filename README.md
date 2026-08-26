@@ -115,11 +115,15 @@ flowchart TB
 
 Being transparent about what's genuinely unresolved, not just what works:
 
-- **Public fundamentals (PE, margins, debt/equity) can show partial data.** Yahoo Finance's
-  `.info` endpoint appears to be rate-limited or blocked for some cloud-hosting IP ranges
-  (confirmed: identical code returns full data from a residential IP, empty from a Render
-  deployment). A [Financial Modeling Prep](https://financialmodelingprep.com) fallback is wired
-  in (`FMP_API_KEY`) but needs a live key to fully verify.
+- **Yahoo Finance's `.info`/`.fast_info` endpoints (the direct source of PE, market cap, margins)
+  are blocked or empty on some cloud-hosting IP ranges** (confirmed: identical code returns full
+  data from a residential IP, empty from a Render deployment) — but the financial-*statement*
+  endpoints (quarterly revenue, net income, equity, debt, shares outstanding, free cash flow) keep
+  working fine even there. PE, price/book, margins, debt/equity, and market cap are computed
+  directly from those statements plus the live price, so fundamentals work without depending on
+  the blocked endpoints at all. A [Financial Modeling Prep](https://financialmodelingprep.com)
+  fallback (`FMP_API_KEY`) exists as a secondary source for anything still missing (e.g. a symbol
+  with too little quarterly history to compute a ratio) but isn't required for the common case.
 - **Gemini's free tier is genuinely small** (order of 20 requests/day for the model in use). The
   agent is designed to ration and fall back gracefully, but this means many cycles run on
   deterministic quant scoring alone rather than LLM review, especially early in a trading day.
