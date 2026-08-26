@@ -131,6 +131,11 @@ Being transparent about what's genuinely unresolved, not just what works:
   trading — the "multi-strategy" design here means multiple *factors* (momentum, value/quality,
   news risk, regime exposure, stop-loss discipline) combined into one long-only book, not multiple
   independent trading strategies running in parallel.
+- **The backend can still cold-start.** Render's free tier sleeps after ~15 min idle; the
+  `keepalive.yml` ping meant to prevent that runs on GitHub Actions' best-effort scheduler, which
+  observably drifts to 25-40 min gaps at a 10-min schedule — beyond Render's sleep threshold. A
+  first visit after a quiet period can take 20-50s to load. Fixable with a dedicated uptime
+  service (e.g. UptimeRobot) or a paid Render tier; left as-is for now.
 
 ## Tech stack
 
@@ -191,8 +196,11 @@ Import this repo into [render.com](https://render.com) as a Web Service; it pick
 | `ALERT_EMAIL_TO` | Yes | Where daily summaries / failure alerts go |
 | `FMP_API_KEY` | Optional | [financialmodelingprep.com](https://financialmodelingprep.com) — fundamentals fallback |
 
-Render's free tier spins the service down after ~15 min idle — `keepalive.yml` pings `/health`
-every 10 minutes to keep it warm and doubles as an uptime alert.
+Render's free tier spins the service down after ~15 min idle. `keepalive.yml` pings `/health`
+every 10 minutes, but GitHub Actions' scheduler is best-effort and observably drifts to 25-40 min
+gaps at this frequency — so cold starts (a 20-50s first load after a quiet period) still happen
+in practice. The workflow's alerting still works reliably; only the "stay warm" part doesn't. See
+[Known limitations](#known-limitations).
 
 ### 3. Frontend — Vercel
 
@@ -215,7 +223,7 @@ Repo → **Settings → Secrets and variables → Actions**:
 | `daily-close.yml` | ~15:35 IST, weekdays | trade summary email |
 | `weekly-outlook.yml` | Fridays ~15:35 IST | research note + email |
 | `monthly-review.yml` | last trading day of month, close | portfolio review + email |
-| `keepalive.yml` | every 10 min | keeps Render warm, uptime alert |
+| `keepalive.yml` | every 10 min (best-effort) | uptime alert; doesn't reliably prevent cold starts |
 
 ## Local development
 

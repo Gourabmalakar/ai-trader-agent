@@ -1,10 +1,13 @@
 name: Backend keep-alive
 
-# Render's free web service spins down after ~15 min idle. Pinging /health every 10 minutes
-# keeps it warm (avoiding cold-start latency before trading ticks) and doubles as an uptime
-# check: a failure here alerts immediately via Resend, independent of the backend itself.
-# Note: this runs 24/7 and is only "free" GitHub Actions minutes on a public repo; reduce the
-# frequency (or drop this workflow) if the repo is private and minutes are metered.
+# Intent: ping /health every 10 minutes to keep Render's free web service from spinning down
+# after ~15 min idle. In practice, GitHub Actions' `schedule:` trigger is documented as best-
+# effort and observably drifts to 25-40 min gaps between runs at this frequency under GitHub's
+# own load — so this does NOT reliably prevent cold starts; occasional 20-50s first-load delays
+# after a quiet period are expected and accepted (see README > Known limitations). What this
+# workflow does reliably provide is an uptime signal: a failure here still alerts immediately
+# via Resend, independent of the backend itself.
+# Note: this runs (best-effort) 24/7 and is only "free" GitHub Actions minutes on a public repo.
 on:
   schedule:
     - cron: '*/10 * * * *'
