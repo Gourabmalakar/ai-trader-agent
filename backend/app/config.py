@@ -38,7 +38,11 @@ class Settings:
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
     gemini_max_output_tokens: int = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "700"))
     gemini_temperature: float = float(os.getenv("GEMINI_TEMPERATURE", "0.3"))
-    gemini_trading_daily_cap: int = int(os.getenv("GEMINI_TRADING_DAILY_CAP", "10"))
+    # Google's free tier for this model caps around 20 requests/day total. Trading ticks now run
+    # every 15 min (~25-30 cycles/day), so this cap - not the cycle cadence - is what actually
+    # rations Gemini usage; kept well under the hard ceiling so a bad run of 503 retries (up to 3
+    # real attempts each) can't blow through the whole day's quota on its own.
+    gemini_trading_daily_cap: int = int(os.getenv("GEMINI_TRADING_DAILY_CAP", "6"))
     gemini_research_daily_cap: int = int(os.getenv("GEMINI_RESEARCH_DAILY_CAP", "2"))
     # Chat is scoped out of LLM usage entirely by default (cap 0) so trading decisions and
     # research notes get the whole of Gemini's limited free-tier quota; the chat box still
@@ -55,6 +59,12 @@ class Settings:
 
     # --- Cron / API auth ---
     cron_secret: Optional[str] = os.getenv("CRON_SECRET")
+
+    # --- Fundamentals fallback (Financial Modeling Prep) ---
+    # Optional: only used when Yahoo's .info scrape comes back empty (a known issue on some
+    # cloud-provider outbound IPs). Free tier at financialmodelingprep.com. If unset, fundamentals
+    # simply stay whatever Yahoo returned (possibly partial/empty), exactly as before.
+    fmp_api_key: Optional[str] = os.getenv("FMP_API_KEY")
 
     # --- Email (Resend) ---
     resend_api_key: Optional[str] = os.getenv("RESEND_API_KEY")

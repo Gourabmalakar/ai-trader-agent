@@ -9,15 +9,18 @@ type Timeframe = '1D' | '1W' | '1M' | '3M' | '1Y' | 'ALL';
 export function PerformanceChart({ data }: { data: DashboardData['performance'] }) {
   const [timeframe, setTimeframe] = useState<Timeframe>('1M');
 
-  // Filter data based on selected timeframe
+  // Filter by actual calendar date, not a fixed point count: the backend now snapshots every
+  // ~15 minutes during market hours (not once/day), so a fixed "last N points" slice no longer
+  // corresponds to "last N days" — "1D" was showing only the literal last 2 array entries
+  // regardless of how many real intraday points existed, which is why it looked like a single
+  // straight line between two points instead of the day's actual movement.
   const getFilteredData = () => {
     if (!data || data.length === 0) return [];
-    if (timeframe === '1D') return data.slice(-2);
-    if (timeframe === '1W') return data.slice(-7);
-    if (timeframe === '1M') return data.slice(-30);
-    if (timeframe === '3M') return data.slice(-90);
-    if (timeframe === '1Y') return data.slice(-365);
-    return data;
+    if (timeframe === 'ALL') return data;
+    const daysToShow: Record<Exclude<Timeframe, 'ALL'>, number> = { '1D': 1, '1W': 7, '1M': 30, '3M': 90, '1Y': 365 };
+    const uniqueDates = Array.from(new Set(data.map((point) => point.date))).sort();
+    const cutoffDates = new Set(uniqueDates.slice(-daysToShow[timeframe]));
+    return data.filter((point) => cutoffDates.has(point.date));
   };
 
   const chartData = getFilteredData();

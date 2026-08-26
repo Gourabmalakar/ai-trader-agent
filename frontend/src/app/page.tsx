@@ -2,15 +2,13 @@ import { getDashboardData } from '@/lib/api';
 import { PortfolioHero } from '@/components/PortfolioHero';
 import { PerformanceChart } from '@/components/PerformanceChart';
 import { HoldingsTable } from '@/components/HoldingsTable';
-import { ReasoningFeed } from '@/components/ReasoningFeed';
+import { TradeLog } from '@/components/TradeLog';
 import { SchedulerPanel } from '@/components/SchedulerPanel';
-import { TradeBlotter } from '@/components/TradeBlotter';
 import { MarketIntelligence } from '@/components/MarketIntelligence';
 import { ResearchNotes } from '@/components/ResearchNotes';
 import { CapitalAllocation } from '@/components/CapitalAllocation';
 import { SectorAllocation } from '@/components/SectorAllocation';
 import { GovernancePanel } from '@/components/GovernancePanel';
-import { AgentChatModal } from '@/components/AgentChatModal';
 import { DashboardRefresh } from '@/components/DashboardRefresh';
 
 // Without this, Next.js would prerender "/" as static HTML at build time (as it does by
@@ -97,13 +95,10 @@ export default async function Home() {
           <SectorAllocation allocation={data.sectorAllocation} />
         </section>
 
-        <section className="grid gap-6 xl:grid-cols-[1.35fr_0.95fr]">
-          <HoldingsTable holdings={data.holdings} />
-          <TradeBlotter trades={data.trades} />
-        </section>
+        <HoldingsTable holdings={data.holdings} />
 
-        <section className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-          <ReasoningFeed decisions={data.decisions} />
+        <section className="grid gap-6 xl:grid-cols-[1.3fr_0.9fr]">
+          <TradeLog />
           <MarketIntelligence items={data.marketIntelligence?.items ?? []} />
         </section>
 
@@ -190,7 +185,6 @@ export default async function Home() {
         </section>
       </div>
 
-      <AgentChatModal />
     </main>
   );
 }

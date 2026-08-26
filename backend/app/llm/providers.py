@@ -15,7 +15,12 @@ logger = logging.getLogger("ai_trader_agent.llm")
 # "currently experiencing high demand" — observed as transient in practice (Google's own error
 # message says so), so a couple of short-backoff retries meaningfully cuts how often a real,
 # working API key still ends up falling all the way through to quant-only.
-_RETRYABLE_STATUS_CODES = {429, 503}
+#
+# 429 is deliberately NOT retried: on the free tier it means the daily quota is exhausted
+# (RESOURCE_EXHAUSTED), and every retry attempt still counts as a real request against that same
+# scarce daily allowance — retrying a quota error just burns more of the budget for a call that
+# cannot succeed today. Failing fast on 429 preserves quota for the fallback chain instead.
+_RETRYABLE_STATUS_CODES = {503}
 _MAX_ATTEMPTS = 3
 _RETRY_BACKOFF_SECONDS = 1.5
 

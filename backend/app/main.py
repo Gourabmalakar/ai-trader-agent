@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import traceback
 from datetime import datetime, date, timedelta
-from typing import Optional
+from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.agents.loop import PortfolioAgentLoop
 from app.backtesting.engine import BacktestEngine
 from app.config import settings
+from app.export.xlsx import build_trade_log_xlsx
 from app.llm.chat import ask_llm
 from app.notify.email import send_alert, send_daily_summary, send_monthly_review, send_weekly_outlook
 from app.scheduler.calendar import is_market_day, is_market_open, next_market_open
@@ -107,6 +108,23 @@ def health() -> dict:
 def dashboard() -> dict:
     now = datetime.now(IST)
     return loop.build_dashboard_payload(now, run_cycle=False)
+
+
+@app.get("/api/trades")
+def trades(
+    page: int = 1,
+    page_size: int = 25,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    symbol: Optional[str] = None,
+    format: Optional[str] = None,  # noqa: A002 - "format" reads best as the query param name
+) -> Any:
+    if format == "xlsx":
+        # Excel export ignores pagination and returns every row matching the date/symbol filter,
+        # capped at 20,000 rows as a sanity bound.
+        result = loop.query_trades(page=1, page_size=20_000, date_from=date_from, date_to=date_to, symbol=symbol)
+        return build_trade_log_xlsx(result["trades"])
+    return loop.query_trades(page=page, page_size=page_size, date_from=date_from, date_to=date_to, symbol=symbol)
 
 
 @app.post("/api/chat")
