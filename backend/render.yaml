@@ -24,6 +24,8 @@ services:
         sync: false
       - key: RESEND_API_KEY
         sync: false
+      - key: FMP_API_KEY
+        sync: false
       - key: RESEND_FROM
         value: "AI Trader Agent <onboarding@resend.dev>"
       - key: ALERT_EMAIL_TO

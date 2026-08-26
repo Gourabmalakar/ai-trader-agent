@@ -11,6 +11,7 @@ from app.agents.analyst import AnalystAgent
 from app.agents.market_regime import MarketRegimeAgent
 from app.agents.news_intelligence import NewsImpact, NewsIntelligenceAgent, NewsItem
 from app.config import settings
+from app.data.fundamentals_provider import fetch_fmp_fundamentals
 from app.data.universe import NIFTY_50
 from app.execution.paper import PaperExecutionEngine
 from app.governance.compliance import GovernanceOfficer
@@ -126,6 +127,55 @@ class PortfolioAgentLoop:
             "provider": trade.provider,
             "realized_pnl": trade.realized_pnl,
             "cost_basis": trade.cost_basis,
+        }
+
+    def _trade_display_dict(self, trade: Trade) -> dict:
+        """The public-facing shape of a trade for the dashboard's recent-trades list and the
+        paginated /api/trades endpoint alike — one place for the 'reason' fallback text."""
+        return {
+            "time": trade.timestamp.isoformat(),
+            "symbol": trade.symbol,
+            "name": self.symbols.get(trade.symbol, trade.symbol),
+            "side": trade.side.value,
+            "quantity": trade.quantity,
+            "price": trade.price,
+            "costBasis": trade.cost_basis,
+            "realizedPnl": trade.realized_pnl,
+            "reason": trade.decision_summary or trade.rejection_reason or "Paper execution approved by the risk manager.",
+            "status": trade.status.value,
+            "provider": trade.provider,
+        }
+
+    def query_trades(
+        self,
+        page: int = 1,
+        page_size: int = 25,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        symbol: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Paginated, date-filtered access to the FULL trade history (not just the last 30 shown
+        on the dashboard), for the trade log's pagination/date-filter UI and the Excel export."""
+        self._load_state()
+        matches = [
+            trade
+            for trade in self.ledger.trades
+            if (not date_from or trade.timestamp.date().isoformat() >= date_from)
+            and (not date_to or trade.timestamp.date().isoformat() <= date_to)
+            and (not symbol or trade.symbol == symbol)
+        ]
+        matches.sort(key=lambda trade: trade.timestamp, reverse=True)
+        total_count = len(matches)
+        page = max(1, page)
+        page_size = max(1, min(page_size, 500))
+        start = (page - 1) * page_size
+        page_trades = matches[start : start + page_size]
+        return {
+            "trades": [self._trade_display_dict(trade) for trade in page_trades],
+            "page": page,
+            "pageSize": page_size,
+            "totalCount": total_count,
+            "totalPages": max(1, -(-total_count // page_size)),
         }
 
     def _trade_from_dict(self, payload: dict) -> Trade:
@@ -365,6 +415,18 @@ class PortfolioAgentLoop:
             "earningsGrowth": info.get("earningsGrowth"),
         }
         snapshot.update(self._condensed_financials(symbol))
+
+        # If Yahoo's ratio fields are still empty (the persistent-block scenario retries/fast_info
+        # can't fix), try Financial Modeling Prep — a key-authenticated API rather than a browser-
+        # fingerprint scrape, so it isn't subject to the same cloud-IP blocking. Only fills gaps;
+        # never overwrites a real Yahoo value. No-ops entirely if FMP_API_KEY isn't configured.
+        ratio_fields = ["trailingPE", "priceToBook", "profitMargins", "debtToEquity", "revenueGrowth", "earningsGrowth", "freeCashflow"]
+        if settings.fmp_api_key and all(snapshot.get(field) is None for field in ratio_fields):
+            fmp_data = fetch_fmp_fundamentals(symbol)
+            for key, value in fmp_data.items():
+                if snapshot.get(key) is None:
+                    snapshot[key] = value
+
         return snapshot
 
     def _condensed_financials(self, symbol: str) -> dict[str, Any]:
@@ -947,18 +1009,7 @@ class PortfolioAgentLoop:
         )
         sector_allocation.append({"sector": "Cash", "weightPct": round(cash_weight, 2)})
         trades = [
-            {
-                "time": trade.timestamp.isoformat(),
-                "symbol": trade.symbol,
-                "side": trade.side.value,
-                "quantity": trade.quantity,
-                "price": trade.price,
-                "costBasis": trade.cost_basis,
-                "realizedPnl": trade.realized_pnl,
-                "reason": trade.decision_summary or trade.rejection_reason or "Paper execution approved by the risk manager.",
-                "status": trade.status.value,
-                "provider": trade.provider,
-            }
+            self._trade_display_dict(trade)
             for trade in self.ledger.trades[-30:][::-1]
         ]
         market_status = "MARKET_OPEN" if is_market_open(now) else "AFTER_HOURS"
