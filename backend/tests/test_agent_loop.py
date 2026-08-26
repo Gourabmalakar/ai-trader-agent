@@ -73,6 +73,60 @@ def test_sanitize_against_previous_allows_plausible_moves():
     assert new_prices["RELIANCE.NS"] == 1080.0
 
 
+def test_fill_computed_ratios_derives_pe_pb_margin_debt_equity_from_statements():
+    # Confirmed live: Yahoo's .info/.fast_info ratio endpoints can be empty on some deployments
+    # while the underlying statement data (revenue, equity, shares, debt) keeps working fine -
+    # this is what actually recovers fundamentals in that situation, without any new API key.
+    loop = PortfolioAgentLoop()
+    loop.latest_prices = {"TCS.NS": 4000.0}
+    snapshot = {
+        "marketCap": None,
+        "trailingPE": None,
+        "priceToBook": None,
+        "profitMargins": None,
+        "debtToEquity": None,
+        "freeCashflow": None,
+        "freeCashflowTrend": [1000.0, 900.0],
+        "sharesOutstanding": 1_000_000.0,
+        "netIncomeTTM": 500_000.0,
+        "totalRevenueTTM": 5_000_000.0,
+        "totalEquityLatest": 2_000_000.0,
+        "totalDebtLatest": 1_000_000.0,
+    }
+
+    loop._fill_computed_ratios("TCS.NS", snapshot)
+
+    assert snapshot["marketCap"] == 4_000.0 * 1_000_000.0
+    assert snapshot["profitMargins"] == 0.1
+    assert snapshot["trailingPE"] == round(snapshot["marketCap"] / 500_000.0, 2)
+    assert snapshot["priceToBook"] == round(snapshot["marketCap"] / 2_000_000.0, 2)
+    assert snapshot["debtToEquity"] == 50.0
+    assert snapshot["freeCashflow"] == 1000.0
+
+
+def test_fill_computed_ratios_never_overwrites_a_real_info_value():
+    loop = PortfolioAgentLoop()
+    loop.latest_prices = {"TCS.NS": 4000.0}
+    snapshot = {
+        "marketCap": 999.0,
+        "trailingPE": 12.3,
+        "priceToBook": None,
+        "profitMargins": None,
+        "debtToEquity": None,
+        "freeCashflow": None,
+        "sharesOutstanding": 1_000_000.0,
+        "netIncomeTTM": 500_000.0,
+        "totalRevenueTTM": 5_000_000.0,
+        "totalEquityLatest": None,
+        "totalDebtLatest": None,
+    }
+
+    loop._fill_computed_ratios("TCS.NS", snapshot)
+
+    assert snapshot["marketCap"] == 999.0
+    assert snapshot["trailingPE"] == 12.3
+
+
 def test_fundamentals_news_tilt_trims_expensive_thin_margin_position():
     loop = PortfolioAgentLoop()
     loop.public_fundamentals = [
