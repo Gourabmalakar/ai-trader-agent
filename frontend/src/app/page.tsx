@@ -19,6 +19,13 @@ import { DashboardRefresh } from '@/components/DashboardRefresh';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
+// Vercel's serverless function has its own execution timeout (as short as ~10s by default on
+// some plans). Render's free backend can take 20-50s to wake from a cold start, so without this,
+// Vercel could give up and this page would show the "offline" fallback for a backend that was
+// actually fine, just still booting — a second refresh moments later would then work. 60s is the
+// Hobby-plan ceiling; raise it if this project is on Pro or higher.
+export const maxDuration = 60;
+
 function formatCompactNumber(value?: number | null) {
   if (value === null || value === undefined || Number.isNaN(value)) return 'N/A';
   return new Intl.NumberFormat('en-IN', { notation: 'compact', maximumFractionDigits: 1 }).format(value);
