@@ -1,11 +1,9 @@
 name: Daily close report
 
-# Fires once at ~15:35 IST (10:05 UTC) on weekdays: generates the daily research note and
-# emails the trade summary. The backend no-ops the research note gracefully if it isn't a
-# trading day; the email still reports the (unchanged) portfolio state.
+# Scheduling moved to cron-job.org (~15:35 IST / 10:05 UTC, weekdays, POST to
+# /api/notify/daily-summary with the X-Cron-Secret header) - see trading-tick.yml for why.
+# Kept here as a manual/backup trigger (workflow_dispatch) and for its failure-alert step.
 on:
-  schedule:
-    - cron: '5 10 * * 1-5'
   workflow_dispatch:
 
 jobs:

@@ -3,6 +3,7 @@ import { PortfolioHero } from '@/components/PortfolioHero';
 import { PerformanceChart } from '@/components/PerformanceChart';
 import { HoldingsTable } from '@/components/HoldingsTable';
 import { TradeLog } from '@/components/TradeLog';
+import { EventLog } from '@/components/EventLog';
 import { SchedulerPanel } from '@/components/SchedulerPanel';
 import { MarketIntelligence } from '@/components/MarketIntelligence';
 import { ResearchNotes } from '@/components/ResearchNotes';
@@ -190,6 +191,8 @@ export default async function Home() {
             </div>
           </div>
         </section>
+
+        <EventLog />
       </div>
 
     </main>
