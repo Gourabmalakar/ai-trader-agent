@@ -46,12 +46,12 @@ whether the backend itself is reachable.
 
 ```mermaid
 flowchart TB
-    subgraph Scheduling["GitHub Actions (cron)"]
-        TT["trading-tick.yml<br/>every 15 min, market hours"]
-        DC["daily-close.yml<br/>~15:35 IST"]
-        WO["weekly-outlook.yml<br/>Fridays"]
-        MR["monthly-review.yml<br/>last trading day"]
-        KA["keepalive.yml<br/>every 10 min"]
+    subgraph Scheduling["cron-job.org (GitHub Actions kept as manual backup only)"]
+        TT["Trading tick<br/>every 15 min, market hours"]
+        DC["Daily close<br/>~15:35 IST"]
+        WO["Weekly outlook<br/>Fridays"]
+        MR["Monthly review<br/>daily call, self-guarded server-side"]
+        KA["Keep-alive<br/>every ~10 min"]
     end
 
     subgraph Backend["FastAPI backend (Render)"]
@@ -131,11 +131,11 @@ Being transparent about what's genuinely unresolved, not just what works:
   trading — the "multi-strategy" design here means multiple *factors* (momentum, value/quality,
   news risk, regime exposure, stop-loss discipline) combined into one long-only book, not multiple
   independent trading strategies running in parallel.
-- **The backend can still cold-start.** Render's free tier sleeps after ~15 min idle; the
-  `keepalive.yml` ping meant to prevent that runs on GitHub Actions' best-effort scheduler, which
-  observably drifts to 25-40 min gaps at a 10-min schedule — beyond Render's sleep threshold. A
-  first visit after a quiet period can take 20-50s to load. Fixable with a dedicated uptime
-  service (e.g. UptimeRobot) or a paid Render tier; left as-is for now.
+- **The backend can still cold-start** on the free Render tier (sleeps after ~15 min idle). The
+  keep-alive ping (now on cron-job.org, see [Autonomy](#4-autonomy--scheduling-via-cron-joborg))
+  should mostly prevent this, but a first visit after a genuinely quiet period can still take
+  20-50s — `page.tsx` sets `maxDuration = 60` so Vercel waits for it instead of showing a false
+  "offline" state.
 
 ## Tech stack
 
@@ -148,7 +148,7 @@ Being transparent about what's genuinely unresolved, not just what works:
 | Market data | Yahoo Finance (`yfinance`), Financial Modeling Prep (fundamentals fallback) |
 | Email | Resend |
 | Hosting | Render (backend), Vercel (frontend) |
-| Scheduling | GitHub Actions (cron) |
+| Scheduling | cron-job.org (GitHub Actions kept as manual backup only) |
 | Excel export | `openpyxl` |
 
 ## Repository structure
@@ -208,22 +208,42 @@ Import the repo (root `vercel.json` builds `frontend/`). Set `NEXT_PUBLIC_API_UR
 Render URL. In **Settings → Deployment Protection**, make sure Production is publicly accessible
 — otherwise logged-out visitors hit a login wall instead of the dashboard.
 
-### 4. Autonomy — GitHub Actions secrets
+### 4. Autonomy — scheduling via cron-job.org
 
-Repo → **Settings → Secrets and variables → Actions**:
+GitHub Actions' `schedule:` trigger is documented as best-effort — in practice on this repo it
+drifted from a 10-15 min schedule to 25-40+ min gaps, and some days barely fired at all. That's
+too unreliable for the core trading loop, so scheduling for the time-sensitive jobs lives on
+[cron-job.org](https://cron-job.org) (free, no card) instead. Create a free account, then add
+these jobs (all as `GET`/`POST` HTTP requests with header `X-Cron-Secret: <your CRON_SECRET>`):
 
-- `BACKEND_URL` — the live Render URL
-- `CRON_SECRET` — must match the backend's
-- `RESEND_API_KEY`, `ALERT_EMAIL_TO` — used as a backstop alert path if the backend is unreachable
+| Job | Method | URL | Schedule (IST) |
+|---|---|---|---|
+| Trading tick | POST | `{BACKEND_URL}/api/cron/run` | every 15 min, 09:15–15:30, Mon–Fri |
+| Daily close | POST | `{BACKEND_URL}/api/notify/daily-summary` | 15:35, Mon–Fri |
+| Weekly outlook | POST | `{BACKEND_URL}/api/notify/weekly-outlook` | 15:35, Fridays |
+| Monthly review | POST | `{BACKEND_URL}/api/notify/monthly-review` | 15:40, days 28–31 (self-guards to only act on the actual last day — see below) |
+| Keep-alive | GET | `{BACKEND_URL}/health` | every ~10 min |
+
+The monthly-review endpoint is safe to call more often than once/month: it checks server-side
+whether today is genuinely the last calendar day of the month and no-ops (`{"skipped": true}`)
+otherwise, since cron-job.org (like GitHub Actions) has no native "last day of month" schedule.
+
+GitHub Actions workflows for these jobs still exist (`workflow_dispatch` only — no automatic
+schedule) as a manual/backup trigger and for their failure-alert step. Repo secrets needed for
+those: `BACKEND_URL`, `CRON_SECRET`, `RESEND_API_KEY`, `ALERT_EMAIL_TO`.
 
 | Workflow | Cadence | Purpose |
 |---|---|---|
 | `ci.yml` | every push/PR to `main` | backend pytest + frontend build |
-| `trading-tick.yml` | every 15 min, 09:15–15:30 IST, weekdays | runs a trading cycle |
-| `daily-close.yml` | ~15:35 IST, weekdays | trade summary email |
-| `weekly-outlook.yml` | Fridays ~15:35 IST | research note + email |
-| `monthly-review.yml` | last trading day of month, close | portfolio review + email |
-| `keepalive.yml` | every 10 min (best-effort) | uptime alert; doesn't reliably prevent cold starts |
+| `trading-tick.yml` | manual only | backup trigger for a trading cycle |
+| `daily-close.yml` | manual only | backup trigger for the trade summary email |
+| `weekly-outlook.yml` | manual only | backup trigger for the research note + email |
+| `monthly-review.yml` | manual only | backup trigger for the portfolio review + email |
+| `keepalive.yml` | manual only | backup health check |
+
+The system event log on the dashboard (every cycle run and email send, success or failure) is
+the actual source of truth for whether automation is firing as expected — check that first if
+something seems missed, rather than GitHub's own run history.
 
 ## Local development
 

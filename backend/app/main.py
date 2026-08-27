@@ -7,7 +7,7 @@ from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.agents.loop import PortfolioAgentLoop
@@ -92,6 +92,20 @@ def _require_cron_secret(x_cron_secret: Optional[str]) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
+def _is_last_day_of_month(value: date) -> bool:
+    return (value + timedelta(days=1)).month != value.month
+
+
+def _log_event(event_type: str, **payload: Any) -> None:
+    """Record a system event (cycle run, email send, ...) to the persistent event log — the
+    backend-side source of truth for whether the autonomous loop is actually firing, independent
+    of what the external scheduler's own run history says. Never raises."""
+    try:
+        loop.store.append_event(event_type, payload)
+    except Exception:  # noqa: BLE001 - logging a failure must never itself cause one
+        logger.exception("Failed to record event %s", event_type)
+
+
 @app.get("/health")
 def health() -> dict:
     now = datetime.now(IST)
@@ -127,6 +141,17 @@ def trades(
     return loop.query_trades(page=page, page_size=page_size, date_from=date_from, date_to=date_to, symbol=symbol)
 
 
+@app.get("/api/events")
+def events(
+    event_type: Optional[list[str]] = Query(default=None),
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 25,
+) -> dict:
+    return loop.store.query_events(event_types=event_type, date_from=date_from, date_to=date_to, page=page, page_size=page_size)
+
+
 @app.post("/api/chat")
 def chat(body: ChatRequest) -> dict:
     now = datetime.now(IST)
@@ -149,7 +174,9 @@ def cron_run(x_cron_secret: Optional[str] = Header(default=None)) -> dict:
     except Exception as error:  # noqa: BLE001 - a cycle failure must never crash the cron endpoint silently
         logger.exception("Trading cycle failed")
         send_alert("Trading cycle failed", f"{error}\n\n{traceback.format_exc()[-2000:]}")
+        _log_event("cycle_run", status="failure", error=str(error))
         raise HTTPException(status_code=500, detail="Trading cycle failed; an alert email was sent.") from error
+    _log_event("cycle_run", status="success", engineProvider=payload["scheduler"]["lastEngineProvider"], marketStatus=payload["scheduler"]["status"])
     return {"ok": True, "timestamp": now.isoformat(), "portfolio": payload["portfolio"], "scheduler": payload["scheduler"], "comparison": payload["comparison"]}
 
 
@@ -166,7 +193,9 @@ def notify_daily_summary(x_cron_secret: Optional[str] = Header(default=None)) ->
     except Exception as error:  # noqa: BLE001
         logger.exception("Daily summary failed")
         send_alert("Daily summary generation failed", f"{error}\n\n{traceback.format_exc()[-2000:]}")
+        _log_event("email_sent", kind="daily", status="failure", error=str(error))
         raise HTTPException(status_code=500, detail="Daily summary failed; an alert email was sent.") from error
+    _log_event("email_sent", kind="daily", status="success" if sent else "failure")
     return {"ok": True, "emailSent": sent, "timestamp": now.isoformat()}
 
 
@@ -181,7 +210,9 @@ def notify_weekly_outlook(x_cron_secret: Optional[str] = Header(default=None)) -
     except Exception as error:  # noqa: BLE001
         logger.exception("Weekly outlook failed")
         send_alert("Weekly outlook generation failed", f"{error}\n\n{traceback.format_exc()[-2000:]}")
+        _log_event("email_sent", kind="weekly", status="failure", error=str(error))
         raise HTTPException(status_code=500, detail="Weekly outlook failed; an alert email was sent.") from error
+    _log_event("email_sent", kind="weekly", status="success" if sent else "failure")
     return {"ok": True, "note": note, "emailSent": sent, "timestamp": now.isoformat()}
 
 
@@ -189,6 +220,11 @@ def notify_weekly_outlook(x_cron_secret: Optional[str] = Header(default=None)) -
 def notify_monthly_review(x_cron_secret: Optional[str] = Header(default=None)) -> dict:
     _require_cron_secret(x_cron_secret)
     now = datetime.now(IST)
+    # Self-guarded so this is safe to call daily (e.g. from a cron service that can't run
+    # conditional logic the way a GitHub Actions bash step could) — it only actually generates
+    # and emails the review on the last calendar day of the month.
+    if not _is_last_day_of_month(now.date()):
+        return {"ok": True, "skipped": True, "reason": "not the last day of the month", "timestamp": now.isoformat()}
     try:
         payload = loop.build_dashboard_payload(now, run_cycle=False)
         note = loop.generate_monthly_research(now)
@@ -196,7 +232,9 @@ def notify_monthly_review(x_cron_secret: Optional[str] = Header(default=None)) -
     except Exception as error:  # noqa: BLE001
         logger.exception("Monthly review failed")
         send_alert("Monthly review generation failed", f"{error}\n\n{traceback.format_exc()[-2000:]}")
+        _log_event("email_sent", kind="monthly", status="failure", error=str(error))
         raise HTTPException(status_code=500, detail="Monthly review failed; an alert email was sent.") from error
+    _log_event("email_sent", kind="monthly", status="success" if sent else "failure")
     return {"ok": True, "note": note, "emailSent": sent, "timestamp": now.isoformat()}
 
 

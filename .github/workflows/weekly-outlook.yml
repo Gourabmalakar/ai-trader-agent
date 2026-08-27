@@ -1,11 +1,9 @@
 name: Weekly market outlook
 
-# Fires once a week, Friday at ~15:35 IST (10:05 UTC) market close: generates the weekly
-# research note and emails it. Deliberately weekly, not daily, to keep most of Gemini's
-# limited free-tier daily quota available for actual trading decisions.
+# Scheduling moved to cron-job.org (Fridays ~15:35 IST / 10:05 UTC, POST to
+# /api/notify/weekly-outlook with the X-Cron-Secret header) - see trading-tick.yml for why.
+# Kept here as a manual/backup trigger (workflow_dispatch) and for its failure-alert step.
 on:
-  schedule:
-    - cron: '5 10 * * 5'
   workflow_dispatch:
 
 jobs:

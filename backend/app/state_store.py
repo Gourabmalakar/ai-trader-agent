@@ -137,3 +137,62 @@ class StateStore:
             }
             for row in rows
         ]
+
+    def query_events(
+        self,
+        event_types: Optional[list[str]] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> dict[str, Any]:
+        """Paginated, filtered access to the system event log (cycle runs, email sends, and
+        anything else append_event records) — the backend-side source of truth for whether the
+        autonomous loop is actually firing, independent of what GitHub Actions' run history says."""
+        page = max(1, page)
+        page_size = max(1, min(page_size, 200))
+        offset = (page - 1) * page_size
+
+        conn = self._connect()
+        if conn is None:
+            return {"events": [], "page": page, "pageSize": page_size, "totalCount": 0, "totalPages": 1}
+        self.ensure_schema()
+
+        conditions: list[str] = []
+        params: list[Any] = []
+        if event_types:
+            conditions.append("event_type = ANY(%s)")
+            params.append(event_types)
+        if date_from:
+            conditions.append("created_at >= %s")
+            params.append(date_from)
+        if date_to:
+            conditions.append("created_at < (%s::date + interval '1 day')")
+            params.append(date_to)
+        where_clause = f"where {' and '.join(conditions)}" if conditions else ""
+
+        with conn.cursor() as cursor:
+            cursor.execute(f"select count(*) from agent_events {where_clause}", params)
+            total_count = cursor.fetchone()[0]
+            cursor.execute(
+                f"select event_type, payload, created_at from agent_events {where_clause} order by id desc limit %s offset %s",
+                [*params, page_size, offset],
+            )
+            rows = cursor.fetchall()
+        conn.close()
+
+        events = [
+            {
+                "eventType": row[0],
+                "payload": row[1],
+                "createdAt": row[2].isoformat() if isinstance(row[2], datetime) else str(row[2]),
+            }
+            for row in rows
+        ]
+        return {
+            "events": events,
+            "page": page,
+            "pageSize": page_size,
+            "totalCount": total_count,
+            "totalPages": max(1, -(-total_count // page_size)),
+        }
