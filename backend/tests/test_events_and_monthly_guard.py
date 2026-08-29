@@ -74,3 +74,42 @@ def test_log_event_swallows_failures():
 
     with patch.object(loop.store, "append_event", side_effect=Exception("db down")):
         _log_event("cycle_run", status="success")  # must not raise
+
+
+def test_weekly_outlook_email_still_sends_when_research_note_is_empty():
+    # Regression test: this endpoint used to be `sent = send_weekly_outlook(...) if note else False`,
+    # which silently skipped the entire email (including real portfolio numbers) whenever the LLM
+    # research note failed to generate. It must now always call send_weekly_outlook.
+    from app.main import loop
+
+    client = TestClient(app)
+    with patch("app.main.settings", dataclasses.replace(base_settings, cron_secret="test-secret")), patch.object(
+        loop, "build_dashboard_payload", return_value={"comparison": {}, "portfolio": {}, "trades": []}
+    ), patch.object(loop, "generate_weekly_research", return_value={}), patch(
+        "app.main.send_weekly_outlook", return_value=True
+    ) as send_mock:
+        response = client.post("/api/notify/weekly-outlook", headers={"X-Cron-Secret": "test-secret"})
+
+    assert response.status_code == 200
+    assert response.json()["emailSent"] is True
+    send_mock.assert_called_once()
+
+
+def test_monthly_review_email_still_sends_when_research_note_is_empty():
+    from app.main import loop
+
+    client = TestClient(app)
+    fixed_now = datetime(2026, 8, 31, 15, 40, tzinfo=IST)
+    with patch("app.main.settings", dataclasses.replace(base_settings, cron_secret="test-secret")), patch(
+        "app.main.datetime"
+    ) as mock_datetime, patch.object(
+        loop, "build_dashboard_payload", return_value={"comparison": {}, "portfolio": {}, "trades": []}
+    ), patch.object(loop, "generate_monthly_research", return_value={}), patch(
+        "app.main.send_monthly_review", return_value=True
+    ) as send_mock:
+        mock_datetime.now.return_value = fixed_now
+        response = client.post("/api/notify/monthly-review", headers={"X-Cron-Secret": "test-secret"})
+
+    assert response.status_code == 200
+    assert response.json()["emailSent"] is True
+    send_mock.assert_called_once()

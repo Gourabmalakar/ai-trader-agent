@@ -206,7 +206,12 @@ def notify_weekly_outlook(x_cron_secret: Optional[str] = Header(default=None)) -
     try:
         payload = loop.build_dashboard_payload(now, run_cycle=False)
         note = loop.generate_weekly_research(now)
-        sent = send_weekly_outlook(payload, note.get("text", "")) if note else False
+        # Always send the email, even when the LLM note failed to generate (a real, common case
+        # given Gemini's tiny free-tier quota) — the real portfolio numbers are still worth
+        # reporting, and send_weekly_outlook already renders an honest "no note this cycle"
+        # placeholder when note text is empty. Previously this skipped the email entirely on any
+        # LLM hiccup, silently dropping the whole weekly summary.
+        sent = send_weekly_outlook(payload, note.get("text", ""))
     except Exception as error:  # noqa: BLE001
         logger.exception("Weekly outlook failed")
         send_alert("Weekly outlook generation failed", f"{error}\n\n{traceback.format_exc()[-2000:]}")
@@ -228,7 +233,9 @@ def notify_monthly_review(x_cron_secret: Optional[str] = Header(default=None)) -
     try:
         payload = loop.build_dashboard_payload(now, run_cycle=False)
         note = loop.generate_monthly_research(now)
-        sent = send_monthly_review(payload, note.get("text", "")) if note else False
+        # See the identical fix in notify_weekly_outlook above: always send, even without an
+        # LLM-generated note.
+        sent = send_monthly_review(payload, note.get("text", ""))
     except Exception as error:  # noqa: BLE001
         logger.exception("Monthly review failed")
         send_alert("Monthly review generation failed", f"{error}\n\n{traceback.format_exc()[-2000:]}")
