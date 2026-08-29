@@ -126,10 +126,78 @@ def get_trading_decisions(
     )
 
 
-def get_research_note(context: dict[str, Any], store: StateStore, *, kind: str) -> Optional[ResearchResult]:
+def _format_pct(value: Optional[float]) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:+.2f}%"
+
+
+def deterministic_research_note(context: dict[str, Any], *, kind: str) -> ResearchResult:
+    """Plain-English research note built directly from the same numbers the LLM would have
+    been given, with no model call at all. Used whenever Gemini and Claude are both
+    unavailable/capped for the research budget, so the dashboard's Research desk panel and the
+    weekly/monthly emails always have real, honest content instead of going blank — this was a
+    real bug (silently skipping the whole email) that motivated adding this fallback."""
+    period = "week" if kind == "weekly" else "month"
+    comparison = context.get("comparison") or {}
+    allocation = context.get("capitalAllocation") or {}
+    sector_momentum = context.get("sectorMomentum20d") or {}
+    holdings_by_sector = context.get("holdingsBySector") or {}
+    top_gainers = context.get("topGainers") or []
+    top_losers = context.get("topLosers") or []
+
+    lines = [
+        f"This is an automated, non-LLM {period}ly note (both AI research providers were unavailable "
+        f"or over their free-tier quota this cycle) — figures below are computed directly from the "
+        f"fund's own ledger, not written by a model.",
+        (
+            f"The agent is at {comparison.get('agentReturnPct', 0):+.2f}% since inception "
+            f"(₹{comparison.get('agentValue', 0):,.0f} of ₹{comparison.get('startingCapital', 0):,.0f}), "
+            f"versus NIFTY at {comparison.get('niftyReturnPct', 0):+.2f}% over the same period — "
+            f"alpha of {comparison.get('alphaPct', 0):+.2f} percentage points."
+        ),
+        (
+            f"Market regime is classified as '{allocation.get('marketRegime', 'unknown')}', with "
+            f"{allocation.get('deployedPct', 0):.1f}% of capital deployed and "
+            f"{allocation.get('cashReservePct', 0):.1f}% held in cash against a recommended exposure "
+            f"of {allocation.get('recommendedExposurePct', 0):.1f}%. Realized P&L to date: "
+            f"₹{allocation.get('realizedPnl', 0):,.0f}."
+        ),
+    ]
+
+    if holdings_by_sector:
+        top_sectors = sorted(holdings_by_sector.items(), key=lambda item: item[1], reverse=True)[:3]
+        sector_text = ", ".join(f"{sector} ({weight:.1f}%)" for sector, weight in top_sectors)
+        lines.append(f"Largest sector exposures: {sector_text}.")
+
+    if sector_momentum:
+        best_sector = max(sector_momentum.items(), key=lambda item: item[1])
+        worst_sector = min(sector_momentum.items(), key=lambda item: item[1])
+        lines.append(
+            f"Strongest 20-day sector momentum: {best_sector[0]} ({_format_pct(best_sector[1] * 100)}); "
+            f"weakest: {worst_sector[0]} ({_format_pct(worst_sector[1] * 100)})."
+        )
+
+    if top_gainers:
+        gainer_text = ", ".join(f"{row['name']} ({_format_pct(row['momentum20d'] * 100)})" for row in top_gainers[:3])
+        lines.append(f"Top 20-day movers in the universe: {gainer_text}.")
+    if top_losers:
+        loser_text = ", ".join(f"{row['name']} ({_format_pct(row['momentum20d'] * 100)})" for row in reversed(top_losers[:3]))
+        lines.append(f"Weakest 20-day movers in the universe: {loser_text}.")
+
+    lines.append(
+        "This note will switch back to an AI-generated write-up automatically once Gemini or "
+        "Claude research quota is available again — no action needed."
+    )
+    return ResearchResult("\n\n".join(lines), "quant_only")
+
+
+def get_research_note(context: dict[str, Any], store: StateStore, *, kind: str) -> ResearchResult:
     """Generate a weekly or monthly research note. kind is 'weekly' or 'monthly'.
     Uses its own small, separate budget so research never competes with trading calls.
-    Returns None if both providers are unavailable/capped (caller should skip publishing).
+    Always returns a ResearchResult: falls back to a deterministic, non-LLM summary (see
+    deterministic_research_note) when both providers are unavailable/capped, rather than
+    returning None and leaving the dashboard/email with nothing to show.
     """
     purpose = "research"
     prompt = (
@@ -151,4 +219,4 @@ def get_research_note(context: dict[str, Any], store: StateStore, *, kind: str) 
         if text:
             return ResearchResult(text, "claude")
 
-    return None
+    return deterministic_research_note(context, kind=kind)
