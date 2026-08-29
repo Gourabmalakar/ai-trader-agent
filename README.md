@@ -49,8 +49,8 @@ flowchart TB
     subgraph Scheduling["cron-job.org (GitHub Actions kept as manual backup only)"]
         TT["Trading tick<br/>every 15 min, market hours"]
         DC["Daily close<br/>~15:35 IST"]
-        WO["Weekly outlook<br/>Fridays"]
-        MR["Monthly review<br/>daily call, self-guarded server-side"]
+        WO["Weekly outlook<br/>Fri-Sun, self-guarded to 1x/week"]
+        MR["Monthly review<br/>month-end +2 days, self-guarded to 1x/month"]
         KA["Keep-alive<br/>every ~10 min"]
     end
 
@@ -220,13 +220,22 @@ these jobs (all as `GET`/`POST` HTTP requests with header `X-Cron-Secret: <your 
 |---|---|---|---|
 | Trading tick | POST | `{BACKEND_URL}/api/cron/run` | every 15 min, 09:15–15:30, Mon–Fri |
 | Daily close | POST | `{BACKEND_URL}/api/notify/daily-summary` | 15:35, Mon–Fri |
-| Weekly outlook | POST | `{BACKEND_URL}/api/notify/weekly-outlook` | 15:35, Fridays |
-| Monthly review | POST | `{BACKEND_URL}/api/notify/monthly-review` | 15:40, days 28–31 (self-guards to only act on the actual last day — see below) |
+| Weekly outlook | POST | `{BACKEND_URL}/api/notify/weekly-outlook` | 15:35, Fri–Sun (self-guards to send at most once per ISO week — see below) |
+| Monthly review | POST | `{BACKEND_URL}/api/notify/monthly-review` | 15:40, days 28–31 and days 1–2 of every month (self-guards to send at most once per calendar month — see below) |
 | Keep-alive | GET | `{BACKEND_URL}/health` | every ~10 min |
 
-The monthly-review endpoint is safe to call more often than once/month: it checks server-side
-whether today is genuinely the last calendar day of the month and no-ops (`{"skipped": true}`)
-otherwise, since cron-job.org (like GitHub Actions) has no native "last day of month" schedule.
+Both the weekly-outlook and monthly-review endpoints are safe to call more often than they should
+actually send: each is self-guarded server-side (a `notify_dedup` key persisted in Postgres) to
+send **at most once per ISO week / calendar month**. This is what makes the extra Saturday/Sunday
+(and days 1–2 of next month) calls useful rather than spammy — if the Friday/last-day attempt
+already sent successfully, the weekend calls just no-op (`{"skipped": true}`); if it failed (a
+cold-start 503, cron-job.org's own request timeout, a transient Resend outage, or the LLM research
+note failing to generate), the weekend calls retry it — and since markets are closed on weekends,
+there's no trading cycle competing for that day's Gemini/Claude quota, so the retry is actually
+more likely to produce a real AI-written note than the original Friday attempt. The monthly-review
+endpoint additionally checks server-side whether today is genuinely the last calendar day of the
+month (or within two days after it) before doing anything, since cron-job.org — like GitHub Actions
+— has no native "last day of month" schedule.
 
 GitHub Actions workflows for these jobs still exist (`workflow_dispatch` only — no automatic
 schedule) as a manual/backup trigger and for their failure-alert step. Repo secrets needed for

@@ -95,6 +95,90 @@ def test_weekly_outlook_email_still_sends_when_research_note_is_empty():
     send_mock.assert_called_once()
 
 
+def test_weekly_outlook_skips_when_already_sent_this_week():
+    # Friday succeeded -> a same-week Saturday/Sunday retry call must not re-send.
+    from app.main import loop
+
+    client = TestClient(app)
+    fixed_now = datetime(2026, 8, 29, 10, 0, tzinfo=IST)  # Saturday, same ISO week as Fri 8/28
+    with patch("app.main.settings", dataclasses.replace(base_settings, cron_secret="test-secret")), patch(
+        "app.main.datetime"
+    ) as mock_datetime, patch.object(loop.store, "_memory", {"notify_dedup": {"weekly": "2026-W35"}}), patch(
+        "app.main.send_weekly_outlook"
+    ) as send_mock:
+        mock_datetime.now.return_value = fixed_now
+        response = client.post("/api/notify/weekly-outlook", headers={"X-Cron-Secret": "test-secret"})
+
+    assert response.status_code == 200
+    assert response.json()["skipped"] is True
+    send_mock.assert_not_called()
+
+
+def test_weekly_outlook_retries_on_weekend_when_friday_did_not_send():
+    # Friday failed (nothing marked sent for this week) -> a Saturday retry in the same ISO week
+    # must still attempt to send. This is the exact behaviour the user asked for.
+    from app.main import loop
+
+    client = TestClient(app)
+    fixed_now = datetime(2026, 8, 29, 10, 0, tzinfo=IST)  # Saturday, ISO week 2026-W35
+    with patch("app.main.settings", dataclasses.replace(base_settings, cron_secret="test-secret")), patch(
+        "app.main.datetime"
+    ) as mock_datetime, patch.object(loop.store, "_memory", {}), patch.object(
+        loop, "build_dashboard_payload", return_value={"comparison": {}, "portfolio": {}, "trades": []}
+    ), patch.object(loop, "generate_weekly_research", return_value={"text": "real note", "provider": "gemini"}), patch(
+        "app.main.send_weekly_outlook", return_value=True
+    ) as send_mock:
+        mock_datetime.now.return_value = fixed_now
+        response = client.post("/api/notify/weekly-outlook", headers={"X-Cron-Secret": "test-secret"})
+        assert loop.store.load("notify_dedup", {})["weekly"] == "2026-W35"
+
+    assert response.status_code == 200
+    assert response.json()["emailSent"] is True
+    send_mock.assert_called_once()
+
+
+def test_monthly_review_retry_window_covers_first_two_days_of_next_month():
+    # The last day of August (a Monday here) failed to send -> Sept 1st/2nd (a Tue/Wed, but the
+    # point is this also covers a weekend) should still retry the August review, not skip it as
+    # "not the last day of the month".
+    from app.main import loop
+
+    client = TestClient(app)
+    fixed_now = datetime(2026, 9, 1, 9, 0, tzinfo=IST)
+    with patch("app.main.settings", dataclasses.replace(base_settings, cron_secret="test-secret")), patch(
+        "app.main.datetime"
+    ) as mock_datetime, patch.object(loop.store, "_memory", {}), patch.object(
+        loop, "build_dashboard_payload", return_value={"comparison": {}, "portfolio": {}, "trades": []}
+    ), patch.object(loop, "generate_monthly_research", return_value={"text": "real note", "provider": "gemini"}), patch(
+        "app.main.send_monthly_review", return_value=True
+    ) as send_mock:
+        mock_datetime.now.return_value = fixed_now
+        response = client.post("/api/notify/monthly-review", headers={"X-Cron-Secret": "test-secret"})
+        assert loop.store.load("notify_dedup", {})["monthly"] == "2026-08"
+
+    assert response.status_code == 200
+    assert response.json()["emailSent"] is True
+    send_mock.assert_called_once()
+
+
+def test_monthly_review_skips_when_already_sent_for_that_month():
+    from app.main import loop
+
+    client = TestClient(app)
+    fixed_now = datetime(2026, 9, 2, 9, 0, tzinfo=IST)
+    with patch("app.main.settings", dataclasses.replace(base_settings, cron_secret="test-secret")), patch(
+        "app.main.datetime"
+    ) as mock_datetime, patch.object(loop.store, "_memory", {"notify_dedup": {"monthly": "2026-08"}}), patch(
+        "app.main.send_monthly_review"
+    ) as send_mock:
+        mock_datetime.now.return_value = fixed_now
+        response = client.post("/api/notify/monthly-review", headers={"X-Cron-Secret": "test-secret"})
+
+    assert response.status_code == 200
+    assert response.json()["skipped"] is True
+    send_mock.assert_not_called()
+
+
 def test_monthly_review_email_still_sends_when_research_note_is_empty():
     from app.main import loop
 

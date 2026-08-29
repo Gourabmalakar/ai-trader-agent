@@ -96,6 +96,43 @@ def _is_last_day_of_month(value: date) -> bool:
     return (value + timedelta(days=1)).month != value.month
 
 
+def _completed_month_target(value: date) -> Optional[date]:
+    """Which month's review (if any) should be attempted today, expressed as that month's last
+    calendar day. Widened beyond just "today is the last day" so a failed attempt on the actual
+    last day (e.g. cron-job.org's own request timeout, or a Render cold start) can still be
+    retried over the following day or two — including a weekend, when there's no trading cycle
+    competing for the day's LLM quota and a real research note is more likely to succeed. Returns
+    None when today is outside this window entirely."""
+    if _is_last_day_of_month(value):
+        return value
+    if value.day <= 2:
+        return value.replace(day=1) - timedelta(days=1)
+    return None
+
+
+def _iso_week_key(value: date) -> str:
+    year, week, _ = value.isocalendar()
+    return f"{year}-W{week:02d}"
+
+
+def _month_key(value: date) -> str:
+    return f"{value.year}-{value.month:02d}"
+
+
+def _already_sent_this_period(kind: str, period_key: str) -> bool:
+    """True if a weekly/monthly summary email already went out for this period (this ISO week,
+    or this calendar month) — tracked in Postgres so it survives redeploys and cold starts.
+    Deliberately keyed off actual email-send success, not note generation, so a Friday attempt
+    that fails to send still lets Saturday/Sunday retries fire."""
+    return loop.store.load("notify_dedup", {}).get(kind) == period_key
+
+
+def _mark_sent_this_period(kind: str, period_key: str) -> None:
+    state = loop.store.load("notify_dedup", {})
+    state[kind] = period_key
+    loop.store.save("notify_dedup", state)
+
+
 def _log_event(event_type: str, **payload: Any) -> None:
     """Record a system event (cycle run, email send, ...) to the persistent event log — the
     backend-side source of truth for whether the autonomous loop is actually firing, independent
@@ -203,6 +240,14 @@ def notify_daily_summary(x_cron_secret: Optional[str] = Header(default=None)) ->
 def notify_weekly_outlook(x_cron_secret: Optional[str] = Header(default=None)) -> dict:
     _require_cron_secret(x_cron_secret)
     now = datetime.now(IST)
+    # Weekly outlook is scheduled for Friday market close, but weekend retry jobs also call this
+    # endpoint (see README §4) so a Friday failure — a cold-start 503, cron-job.org's own request
+    # timeout, a transient Resend outage — gets another shot on Saturday/Sunday, when there's no
+    # trading cycle competing for the day's LLM quota. Dedup on the ISO week so a Friday success
+    # doesn't get re-sent on the weekend.
+    week_key = _iso_week_key(now.date())
+    if _already_sent_this_period("weekly", week_key):
+        return {"ok": True, "skipped": True, "reason": "weekly outlook already sent this week", "timestamp": now.isoformat()}
     try:
         payload = loop.build_dashboard_payload(now, run_cycle=False)
         note = loop.generate_weekly_research(now)
@@ -218,6 +263,8 @@ def notify_weekly_outlook(x_cron_secret: Optional[str] = Header(default=None)) -
         _log_event("email_sent", kind="weekly", status="failure", error=str(error))
         raise HTTPException(status_code=500, detail="Weekly outlook failed; an alert email was sent.") from error
     _log_event("email_sent", kind="weekly", status="success" if sent else "failure")
+    if sent:
+        _mark_sent_this_period("weekly", week_key)
     return {"ok": True, "note": note, "emailSent": sent, "timestamp": now.isoformat()}
 
 
@@ -226,10 +273,15 @@ def notify_monthly_review(x_cron_secret: Optional[str] = Header(default=None)) -
     _require_cron_secret(x_cron_secret)
     now = datetime.now(IST)
     # Self-guarded so this is safe to call daily (e.g. from a cron service that can't run
-    # conditional logic the way a GitHub Actions bash step could) — it only actually generates
-    # and emails the review on the last calendar day of the month.
-    if not _is_last_day_of_month(now.date()):
-        return {"ok": True, "skipped": True, "reason": "not the last day of the month", "timestamp": now.isoformat()}
+    # conditional logic the way a GitHub Actions bash step could). Fires on the last calendar day
+    # of the month, and is retried on the first two days of the next month (which may land on a
+    # weekend) if the last-day attempt didn't successfully send — see _completed_month_target.
+    target_month_end = _completed_month_target(now.date())
+    if target_month_end is None:
+        return {"ok": True, "skipped": True, "reason": "not the last day of the month (or its retry window)", "timestamp": now.isoformat()}
+    month_key = _month_key(target_month_end)
+    if _already_sent_this_period("monthly", month_key):
+        return {"ok": True, "skipped": True, "reason": "monthly review already sent for this month", "timestamp": now.isoformat()}
     try:
         payload = loop.build_dashboard_payload(now, run_cycle=False)
         note = loop.generate_monthly_research(now)
@@ -242,6 +294,8 @@ def notify_monthly_review(x_cron_secret: Optional[str] = Header(default=None)) -
         _log_event("email_sent", kind="monthly", status="failure", error=str(error))
         raise HTTPException(status_code=500, detail="Monthly review failed; an alert email was sent.") from error
     _log_event("email_sent", kind="monthly", status="success" if sent else "failure")
+    if sent:
+        _mark_sent_this_period("monthly", month_key)
     return {"ok": True, "note": note, "emailSent": sent, "timestamp": now.isoformat()}
 
 
